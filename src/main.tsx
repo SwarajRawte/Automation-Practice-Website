@@ -5,6 +5,7 @@ import {
   NavLink,
   Route,
   Routes,
+  useLocation,
   useNavigate,
 } from "react-router-dom";
 import { io } from "socket.io-client";
@@ -39,6 +40,7 @@ const api = async (url: string, init?: RequestInit) => {
     ...init,
     headers: {
       "content-type": "application/json",
+      "x-test-key": "testlab-control",
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
@@ -136,7 +138,14 @@ function Layout() {
             <Route path="/responsive" element={<Responsive />} />
             <Route path="/i18n" element={<I18n />} />
             <Route path="/errors" element={<Errors />} />
-            <Route path="/admin" element={<Admin />} />
+            <Route
+              path="/admin"
+              element={
+                <Protected role="ADMIN">
+                  <Admin />
+                </Protected>
+              }
+            />
             <Route path="/test-control" element={<TestControl />} />
             <Route path="*" element={<Errors />} />
           </Routes>
@@ -179,81 +188,265 @@ function Dashboard() {
     </>
   );
 }
+function Protected({
+  children,
+  role,
+}: {
+  children: React.ReactNode;
+  role?: string;
+}) {
+  const nav = useNavigate(),
+    loc = useLocation(),
+    user = JSON.parse(localStorage.getItem("user") || "null");
+  useEffect(() => {
+    if (!user)
+      nav(`/auth/login?redirect=${encodeURIComponent(loc.pathname)}`, {
+        replace: true,
+      });
+  }, []);
+  if (!user) return <p role="status">Redirecting to login…</p>;
+  if (role && user.role !== role)
+    return (
+      <>
+        <h2>403 Forbidden</h2>
+        <p>Your role cannot access this page.</p>
+      </>
+    );
+  return <>{children}</>;
+}
 function Auth() {
   const nav = useNavigate(),
+    loc = useLocation(),
+    mode = loc.pathname.split("/").pop() || "login",
+    [show, setShow] = useState(false),
+    [msg, setMsg] = useState(""),
     [form, set] = useState({
+      name: "Automation Tester",
       email: "admin@testlab.local",
       password: "Admin123!",
+      currentPassword: "",
+      confirmPassword: "",
+      token: "",
       remember: false,
-    }),
-    [msg, setMsg] = useState("");
-  const login = async (e: React.FormEvent) => {
+    });
+  const update = (key: string, value: string | boolean) =>
+    set({ ...form, [key]: value });
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setMsg("");
     try {
-      const x = await api("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify(form),
-      });
-      localStorage.setItem("token", x.token);
-      localStorage.setItem("user", JSON.stringify(x.user));
-      setMsg(`Welcome ${x.user.name}`);
-      setTimeout(() => nav("/"), 400);
-    } catch (e: any) {
-      setMsg(e.message);
+      if (mode === "login") {
+        const x = await api("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify(form),
+        });
+        localStorage.setItem("token", x.token);
+        localStorage.setItem("refreshToken", x.refreshToken);
+        localStorage.setItem("user", JSON.stringify(x.user));
+        setMsg(`Welcome ${x.user.name}`);
+        const redirect = new URLSearchParams(loc.search).get("redirect") || "/";
+        setTimeout(() => nav(redirect), 300);
+      } else if (mode === "register") {
+        const x = await api("/api/auth/register", {
+          method: "POST",
+          body: JSON.stringify(form),
+        });
+        setMsg(`${x.message}. Test token: ${x.verificationToken}`);
+      } else if (mode === "forgot") {
+        const x = await api("/api/auth/forgot", {
+          method: "POST",
+          body: JSON.stringify({ email: form.email }),
+        });
+        setMsg(
+          `${x.message}${x.resetToken ? ` Test token: ${x.resetToken}` : ""}`,
+        );
+      } else if (mode === "reset-password") {
+        if (form.password !== form.confirmPassword)
+          throw Error("Passwords do not match");
+        const x = await api("/api/auth/reset-password", {
+          method: "POST",
+          body: JSON.stringify({ token: form.token, password: form.password }),
+        });
+        setMsg(x.message);
+      } else if (mode === "verify") {
+        const x = await api("/api/auth/verify", {
+          method: "POST",
+          body: JSON.stringify({ token: form.token }),
+        });
+        setMsg(x.message);
+      } else if (mode === "change-password") {
+        if (form.password !== form.confirmPassword)
+          throw Error("Passwords do not match");
+        const x = await api("/api/auth/change-password", {
+          method: "POST",
+          body: JSON.stringify({
+            currentPassword: form.currentPassword,
+            newPassword: form.password,
+          }),
+        });
+        setMsg(x.message);
+      }
+    } catch (error: any) {
+      setMsg(error.message);
     }
+  };
+  const logout = async () => {
+    await api("/api/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({
+        refreshToken: localStorage.getItem("refreshToken"),
+      }),
+    });
+    localStorage.removeItem("token");
+    localStorage.removeItem("refreshToken");
+    localStorage.removeItem("user");
+    nav("/auth/login");
+  };
+  const title: { [key: string]: string } = {
+    login: "Sign in",
+    register: "Register",
+    forgot: "Forgot password",
+    "reset-password": "Reset password",
+    verify: "Verify email",
+    "change-password": "Change password",
   };
   return (
     <>
-      <h2>Authentication</h2>
-      <form className="panel form" onSubmit={login}>
-        <label>
-          Email
-          <input
-            id="email"
-            name="email"
-            type="email"
-            value={form.email}
-            onChange={(e) => set({ ...form, email: e.target.value })}
-            required
-          />
-        </label>
-        <label>
-          Password
-          <input
-            id="password"
-            name="password"
-            type="password"
-            value={form.password}
-            onChange={(e) => set({ ...form, password: e.target.value })}
-            required
-          />
-        </label>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={form.remember}
-            onChange={(e) => set({ ...form, remember: e.target.checked })}
-          />
-          Remember me
-        </label>
-        <button data-testid="login-submit">Sign in</button>
-        <button
-          type="button"
-          className="secondary"
-          onClick={() =>
-            api("/api/auth/forgot", { method: "POST", body: "{}" }).then((x) =>
-              setMsg(x.resetCode),
-            )
-          }
-        >
+      <h2>Authentication · {title[mode] || mode}</h2>
+      <div className="actions">
+        <NavLink className="button" to="/auth/login">
+          Login
+        </NavLink>
+        <NavLink className="button secondary" to="/auth/register">
+          Register
+        </NavLink>
+        <NavLink className="button secondary" to="/auth/forgot">
           Forgot password
-        </button>
+        </NavLink>
+        <NavLink className="button secondary" to="/auth/change-password">
+          Change password
+        </NavLink>
+      </div>
+      <form className="panel form" onSubmit={submit}>
+        {mode === "register" && (
+          <label>
+            Name
+            <input
+              id="name"
+              name="name"
+              value={form.name}
+              onChange={(e) => update("name", e.target.value)}
+              required
+            />
+          </label>
+        )}
+        {["login", "register", "forgot"].includes(mode) && (
+          <label>
+            Email
+            <input
+              id="email"
+              name="email"
+              type="email"
+              value={form.email}
+              onChange={(e) => update("email", e.target.value)}
+              required
+            />
+          </label>
+        )}
+        {mode === "change-password" && (
+          <label>
+            Current password
+            <input
+              name="currentPassword"
+              type={show ? "text" : "password"}
+              value={form.currentPassword}
+              onChange={(e) => update("currentPassword", e.target.value)}
+              required
+            />
+          </label>
+        )}
+        {["login", "register", "reset-password", "change-password"].includes(
+          mode,
+        ) && (
+          <label>
+            {mode === "change-password" ? "New password" : "Password"}
+            <input
+              id="password"
+              name="password"
+              type={show ? "text" : "password"}
+              value={form.password}
+              onChange={(e) => update("password", e.target.value)}
+              minLength={8}
+              required
+            />
+          </label>
+        )}
+        {["reset-password", "change-password"].includes(mode) && (
+          <label>
+            Confirm password
+            <input
+              name="confirmPassword"
+              type={show ? "text" : "password"}
+              value={form.confirmPassword}
+              onChange={(e) => update("confirmPassword", e.target.value)}
+              required
+            />
+          </label>
+        )}
+        {["verify", "reset-password"].includes(mode) && (
+          <label>
+            Test token
+            <input
+              name="token"
+              value={form.token}
+              onChange={(e) => update("token", e.target.value)}
+              required
+            />
+          </label>
+        )}
+        {["login", "register", "reset-password", "change-password"].includes(
+          mode,
+        ) && (
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={show}
+              onChange={(e) => setShow(e.target.checked)}
+            />
+            Show passwords
+          </label>
+        )}
+        {mode === "login" && (
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={form.remember}
+              onChange={(e) => update("remember", e.target.checked)}
+            />
+            Remember me
+          </label>
+        )}
+        <button data-testid="auth-submit">{title[mode] || "Submit"}</button>
         <output role="status">{msg}</output>
       </form>
+      {localStorage.getItem("user") && (
+        <button className="secondary" onClick={logout}>
+          Log out current session
+        </button>
+      )}
       <Info
-        name="Login"
-        concepts="Positive/negative login, account lock, session persistence, RBAC"
-        apiEndpoints={["POST /api/auth/login", "POST /api/auth/forgot"]}
+        name={`Authentication: ${title[mode] || mode}`}
+        concepts="Registration, verification, lockout, password reset/change, refresh tokens, logout, redirect, RBAC"
+        apiEndpoints={[
+          "POST /api/auth/login",
+          "POST /api/auth/refresh",
+          "POST /api/auth/logout",
+          "POST /api/auth/register",
+          "POST /api/auth/verify",
+          "POST /api/auth/forgot",
+          "POST /api/auth/reset-password",
+          "POST /api/auth/change-password",
+        ]}
       />
     </>
   );
