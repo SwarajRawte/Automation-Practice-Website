@@ -12,15 +12,20 @@ CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY,user_id INTEGER,status 
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,action TEXT,detail TEXT,created_at TEXT);
 CREATE TABLE IF NOT EXISTS form_submissions(id INTEGER PRIMARY KEY AUTOINCREMENT,data TEXT,created_at TEXT);
 CREATE TABLE IF NOT EXISTS auth_tokens(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,type TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,expires_at TEXT NOT NULL,revoked INTEGER DEFAULT 0,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);`);
+try {
+  db.exec("ALTER TABLE users ADD COLUMN session_version INTEGER DEFAULT 0");
+} catch {
+  // Existing databases already contain the migration.
+}
 export function seed() {
   const users = [
-    ["admin@testlab.local", "Test Lab Admin", "Admin123!", "ADMIN", 0],
+    ["admin@testlab.local", "Test Administrator", "Admin123!", "ADMIN", 0],
     ["user@testlab.local", "Standard User", "User123!", "USER", 0],
     ["viewer@testlab.local", "Read-only User", "Viewer123!", "VIEWER", 0],
     ["locked@testlab.local", "Locked User", "Locked123!", "USER", 1],
   ];
   const u = db.prepare(
-    "INSERT OR REPLACE INTO users(id,email,name,password,role,locked,failed_attempts,verified) VALUES(?,?,?,?,?,?,0,1)",
+    "INSERT OR REPLACE INTO users(id,email,name,password,role,locked,failed_attempts,verified,session_version) VALUES(?,?,?,?,?,?,0,1,0)",
   );
   users.forEach(([email, name, pw, role, locked], index) =>
     u.run(

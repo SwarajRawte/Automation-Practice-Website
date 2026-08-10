@@ -25,24 +25,28 @@ SQLite data is stored at `DB_PATH` (default `data/testlab.db`). The application 
 
 ## Test accounts
 
-| Role | Email | Password |
-|---|---|---|
-| Admin | admin@testlab.local | Admin123! |
-| Standard | user@testlab.local | User123! |
+| Role      | Email                | Password   |
+| --------- | -------------------- | ---------- |
+| Admin     | admin@testlab.local  | Admin123!  |
+| Standard  | user@testlab.local   | User123!   |
 | Read-only | viewer@testlab.local | Viewer123! |
-| Locked | locked@testlab.local | Locked123! |
+| Locked    | locked@testlab.local | Locked123! |
 
 ## Phase 1 authentication
 
 Phase 1 provides registration, simulated email verification, login/logout, remembered sessions, 15-minute JWT access tokens, rotating refresh tokens, forgot/reset password, authenticated password change, configurable five-attempt lockout, protected-route redirect, and Admin/User/Viewer authorization. Tokens used for verification, reset, and refresh are stored only as SHA-256 hashes. Passwords are stored with bcrypt.
+
+Authentication is mandatory. Opening `/` or any module without a valid session shows only `/auth/login`; after login the application opens `/dashboard`. Direct protected URLs are preserved in `returnUrl`. The sidebar and application shell are never rendered until `GET /api/auth/session` succeeds. Authenticated users visiting `/` or `/auth/login` are redirected to `/dashboard`.
+
+Access tokens are accepted through the authorization header and an HTTP-only same-site cookie. Logout revokes refresh tokens, increments the server-side session version to invalidate access tokens, clears browser authentication, and replaces browser history with the login route. See [AUTH_FLOW.md](AUTH_FLOW.md).
 
 In test mode, registration and forgot-password responses expose deterministic tokens so automation never depends on email. Production-style mode omits these values. Authentication events are recorded in the `audit` table.
 
 Authentication routes:
 
 - `POST /api/auth/register`, `/verify`, `/login`, `/refresh`, `/logout`
-- `POST /api/auth/forgot`, `/reset-password`, `/change-password`
-- `GET /api/auth/me`
+- `POST /api/auth/forgot-password`, `/reset-password`, `/change-password`
+- `GET /api/auth/session` (`/me` remains a compatibility alias)
 
 Test controls require `TEST_MODE=true` and the `x-test-key` header matching `TEST_CONTROL_KEY`. They include database reset/seed, user lock/unlock, and refresh-session expiration.
 
@@ -55,6 +59,17 @@ Test controls require `TEST_MODE=true` and the `x-test-key` header matching `TES
 Vite serves the React/TypeScript client in development and proxies REST/WebSocket traffic to Express. Express serves the production bundle, JWT authentication, SQLite-backed data, uploads, test controls, Swagger, and Socket.IO.
 
 Practice routes include `/auth/login`, `/forms/basic`, `/interactions/buttons`, `/alerts`, `/windows`, `/frames`, `/tables/dynamic`, `/crud/products`, `/shop/products`, `/files/upload`, `/dynamic-elements?delay=3000`, `/shadow-dom`, `/storage`, `/api-playground`, `/realtime`, `/accessibility/good`, `/visual?freeze=true`, `/responsive`, `/i18n`, `/errors`, `/admin`, and `/test-control`.
+
+## Phase 2 practice routes
+
+- Forms: `/forms/basic`, `/forms/validation`, `/forms/dynamic`, `/forms/confirmation`
+- Mouse and links: `/interactions/buttons`
+- Keyboard events and accessible listbox/modal: `/interactions/keyboard`
+- Native dialogs, custom/nested/form/non-dismissible modals, and notifications: `/alerts`, `/modals`
+- Browser tabs and child windows: `/windows`
+- Basic, multiple, form, nested, and dynamic frames: `/frames`
+
+Form submissions use real persistence through `POST /api/forms`; confirmation records are available at `GET /api/forms/:id`. The deterministic server-error address is `server-error@test.local`.
 
 ## Environment
 

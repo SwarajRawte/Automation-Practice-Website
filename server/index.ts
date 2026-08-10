@@ -2,14 +2,13 @@ import express from "express";
 import cors from "cors";
 import path from "node:path";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import bcrypt from "bcryptjs";
 import multer from "multer";
 import swagger from "swagger-ui-express";
 import { db, reset, seed } from "./db.js";
-import { auth, roles, sign } from "./auth.js";
-import type { AuthRequest, Claims } from "./types.js";
+import { auth, roles } from "./auth.js";
 import { spec } from "./openapi.js";
 import { authRouter } from "./authRoutes.js";
 const app = express(),
@@ -25,49 +24,7 @@ app.use((q, r, n) => {
 app.get("/api/health", (_q, r) => r.json({ status: "UP" }));
 app.use("/api/docs", swagger.serve, swagger.setup(spec));
 app.use("/api/auth", authRouter);
-app.post("/api/auth/login", (q, r) => {
-  const u = db
-    .prepare("SELECT * FROM users WHERE email=?")
-    .get(q.body.email) as any;
-  if (!u || !bcrypt.compareSync(q.body.password || "", u.password)) {
-    if (u)
-      db.prepare(
-        "UPDATE users SET failed_attempts=failed_attempts+1 WHERE id=?",
-      ).run(u.id);
-    return r.status(401).json({ error: "Invalid email or password" });
-  }
-  if (u.locked) return r.status(423).json({ error: "Account is locked" });
-  const user: Claims = { id: u.id, email: u.email, name: u.name, role: u.role };
-  r.json({ token: sign(user, q.body.remember ? "7d" : "2h"), user });
-});
-app.post("/api/auth/register", (q, r) => {
-  const { email, password, name } = q.body;
-  if (
-    !email ||
-    !name ||
-    !/(?=.*[A-Z])(?=.*\d)(?=.*[^\w]).{8,}/.test(password || "")
-  )
-    return r
-      .status(422)
-      .json({ error: "Use a name, email, and strong password" });
-  try {
-    const x = db
-      .prepare(
-        "INSERT INTO users(email,name,password,role,verified) VALUES(?,?,?,'USER',0)",
-      )
-      .run(email, name, bcrypt.hashSync(password, 10));
-    r.status(201).json({
-      id: Number(x.lastInsertRowid),
-      verificationCode: "TEST-VERIFY-123",
-    });
-  } catch {
-    return r.status(409).json({ error: "Email already registered" });
-  }
-});
-app.get("/api/auth/me", auth, (q: AuthRequest, r) => r.json(q.user));
-app.post("/api/auth/forgot", (_q, r) =>
-  r.json({ message: "Reset email simulated", resetCode: "RESET-123" }),
-);
+app.use("/api", auth);
 app.get("/api/products", (q, r) => {
   const page = Math.max(1, Number(q.query.page) || 1),
     size = Math.min(100, Number(q.query.size) || 10),
@@ -129,22 +86,47 @@ app.get("/api/users", auth, roles("ADMIN"), (q, r) => {
     total: 100,
   });
 });
-app.post("/api/forms", (q, r) =>
-  q.body.email === "server-error@test.local"
-    ? r.status(422).json({ error: "Server-side email rejection" })
-    : r.status(201).json({
-        id: Number(
-          db
-            .prepare(
-              "INSERT INTO form_submissions(data,created_at) VALUES(?,?)",
-            )
-            .run(JSON.stringify(q.body), new Date().toISOString())
-            .lastInsertRowid,
-        ),
-        data: q.body,
-        message: "Form submitted successfully",
-      }),
-);
+app.post("/api/forms", (q, r) => {
+  const errors: Record<string, string> = {};
+  if (!q.body.name || String(q.body.name).length < 2)
+    errors.name = "Name must contain at least 2 characters";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(q.body.email || "")))
+    errors.email = "A valid email is required";
+  if (q.body.email === "server-error@test.local")
+    errors.email = "This email is rejected by the server test scenario";
+  if (q.body.password !== q.body.confirmPassword)
+    errors.confirmPassword = "Passwords must match";
+  if (
+    q.body.quantity &&
+    (Number(q.body.quantity) < 1 || Number(q.body.quantity) > 10)
+  )
+    errors.quantity = "Quantity must be between 1 and 10";
+  if (q.body.employment === "Employed" && !q.body.company)
+    errors.company = "Company is required when employed";
+  if (Object.keys(errors).length)
+    return r.status(422).json({ error: "Form validation failed", errors });
+  const id = Number(
+    db
+      .prepare("INSERT INTO form_submissions(data,created_at) VALUES(?,?)")
+      .run(JSON.stringify(q.body), new Date().toISOString()).lastInsertRowid,
+  );
+  return r
+    .status(201)
+    .json({ id, data: q.body, message: "Form submitted successfully" });
+});
+app.get("/api/forms/:id", (q, r) => {
+  const row = db
+    .prepare("SELECT * FROM form_submissions WHERE id=?")
+    .get(String(q.params.id)) as
+    { id: number; data: string; created_at: string } | undefined;
+  return row
+    ? r.json({
+        id: row.id,
+        data: JSON.parse(row.data),
+        createdAt: row.created_at,
+      })
+    : r.status(404).json({ error: "Form submission not found" });
+});
 const upload = multer({ dest: "uploads/", limits: { fileSize: 5e6 } });
 app.post("/api/files/upload", upload.array("files", 5), (q, r) =>
   r.status(201).json({
@@ -207,9 +189,14 @@ app.post("/api/test/users/:id/lock", only, (q, r) => {
 });
 app.post("/api/test/sessions/:userId/expire", only, (q, r) => {
   const result = db
-    .prepare("UPDATE auth_tokens SET revoked=1 WHERE user_id=? AND type='refresh'")
+    .prepare(
+      "UPDATE auth_tokens SET revoked=1 WHERE user_id=? AND type='refresh'",
+    )
     .run(String(q.params.userId));
-  r.json({ userId: Number(q.params.userId), expiredSessions: Number(result.changes) });
+  r.json({
+    userId: Number(q.params.userId),
+    expiredSessions: Number(result.changes),
+  });
 });
 app.get("/api/admin/audit", auth, roles("ADMIN"), (_q, r) =>
   r.json({
@@ -220,10 +207,14 @@ io.on("connection", (s) => {
   s.emit("status", { online: true, id: s.id });
   s.on("chat", (m) => io.emit("chat", { ...m, id: `msg-${Date.now()}` }));
 });
-const dist = path.resolve("dist");
+const dist = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../dist",
+);
 if (fs.existsSync(dist)) {
   app.use(express.static(dist));
-  app.use((_q, r) => r.sendFile(path.join(dist, "index.html")));
+  const indexHtml = fs.readFileSync(path.join(dist, "index.html"), "utf8");
+  app.use((_q, r) => r.type("html").send(indexHtml));
 }
 server.listen(Number(process.env.PORT || 3000), () =>
   console.log("E2E Test Lab ready"),

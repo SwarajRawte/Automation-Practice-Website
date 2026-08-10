@@ -18,8 +18,10 @@ test("admin can login, refresh, access profile, and logout", async () => {
     })
     .expect(200);
   assert.equal(login.body.user.role, "ADMIN");
+  assert.equal(login.body.user.id, "user-admin-001");
   assert.ok(login.body.token);
   assert.ok(login.body.refreshToken);
+  assert.match(String(login.headers["set-cookie"]), /access_token=/);
   await request(app)
     .get("/api/auth/me")
     .set("authorization", `Bearer ${login.body.token}`)
@@ -34,9 +36,20 @@ test("admin can login, refresh, access profile, and logout", async () => {
     .send({ refreshToken: refreshed.body.refreshToken })
     .expect(200);
   await request(app)
+    .get("/api/auth/session")
+    .set("authorization", `Bearer ${refreshed.body.token}`)
+    .expect(401);
+  await request(app)
     .post("/api/auth/refresh")
     .send({ refreshToken: refreshed.body.refreshToken })
     .expect(401);
+});
+test("login validates required fields and locked users deterministically", async () => {
+  await request(app).post("/api/auth/login").send({}).expect(422);
+  await request(app)
+    .post("/api/auth/login")
+    .send({ email: "locked@testlab.local", password: "Locked123!" })
+    .expect(423);
 });
 test("registration requires verification before login", async () => {
   const registered = await request(app)
