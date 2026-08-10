@@ -1,0 +1,12 @@
+services:
+  testlab:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      PORT: 3000
+      TEST_MODE: "true"
+      JWT_SECRET: docker-local-secret
+      DB_PATH: /app/data/testlab.db
+    volumes: ["testlab-data:/app/data"]
+volumes:
+  testlab-data:

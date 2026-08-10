@@ -1,0 +1,64 @@
+# E2E Test Lab
+
+A locally runnable, deterministic full-stack practice application for Playwright, Cypress, Selenium, WebdriverIO, Robot Framework, and other browser automation tools.
+
+## Quick start
+
+Requires Node 22.5+ (Node 24 LTS recommended).
+
+```bash
+cp .env.example .env
+npm install
+npm run dev
+```
+
+Frontend: `http://localhost:5173`; API: `http://localhost:3000`; Swagger: `http://localhost:3000/api/docs`.
+
+Production or Docker:
+
+```bash
+npm run build && npm start
+docker compose up --build
+```
+
+SQLite data is stored at `DB_PATH` (default `data/testlab.db`). The application uses Node's built-in SQLite driver, avoiding native add-on setup. Run `npm run seed` to restore deterministic products/orders, or `npm run reset` for a full reset.
+
+## Test accounts
+
+| Role | Email | Password |
+|---|---|---|
+| Admin | admin@testlab.local | Admin123! |
+| Standard | user@testlab.local | User123! |
+| Read-only | viewer@testlab.local | Viewer123! |
+| Locked | locked@testlab.local | Locked123! |
+
+## Commands
+
+`npm run dev`, `npm run build`, `npm start`, `npm test`, `npm run lint`, `npm run typecheck`, `npm run seed`, `npm run reset`.
+
+## Architecture and routes
+
+Vite serves the React/TypeScript client in development and proxies REST/WebSocket traffic to Express. Express serves the production bundle, JWT authentication, SQLite-backed data, uploads, test controls, Swagger, and Socket.IO.
+
+Practice routes include `/auth/login`, `/forms/basic`, `/interactions/buttons`, `/alerts`, `/windows`, `/frames`, `/tables/dynamic`, `/crud/products`, `/shop/products`, `/files/upload`, `/dynamic-elements?delay=3000`, `/shadow-dom`, `/storage`, `/api-playground`, `/realtime`, `/accessibility/good`, `/visual?freeze=true`, `/responsive`, `/i18n`, `/errors`, `/admin`, and `/test-control`.
+
+## Environment
+
+See `.env.example`. Test-control endpoints are unavailable when `TEST_MODE=false`. Always replace `JWT_SECRET` outside local development. No payment/email provider or hardware permission is contacted.
+
+## Automation examples
+
+Install the example project's dependencies, start this app, then use `npm test` in `examples/playwright` or `examples/cypress`. For Selenium, use Maven in `examples/selenium-java`. Examples are intentionally small and demonstrate reusable page objects, stable selectors, API setup, UI assertions, screenshots, traces/reports, and CI-ready configuration.
+
+## Troubleshooting
+
+- Delete `data/testlab.db` only when the server is stopped, or use `npm run reset`.
+- If port 3000/5173 is busy, set `PORT` and adjust the Vite proxy.
+- File uploads are limited to 5 MB and five files.
+- Login once as admin before testing protected management APIs.
+
+See [TESTING_GUIDE.md](TESTING_GUIDE.md), [API_GUIDE.md](API_GUIDE.md), and [MODULE_CATALOG.md](MODULE_CATALOG.md). Contributions should follow [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Known limitations and next improvements
+
+This deliberately compact lab demonstrates every major automation surface, but advanced rich editors, real cross-origin frames, full checkout/order persistence, closed-shadow-root access, camera/microphone hardware, email delivery, and real payments are simulations or documented constraints. Natural next steps are deeper per-module variants, snapshot/restore, refresh-token rotation, richer CRUD history, and additional framework examples.

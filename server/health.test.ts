@@ -1,0 +1,1 @@
+import test from'node:test';import assert from'node:assert/strict';import{db}from'./db.js';test('deterministic seed',()=>{assert.equal((db.prepare('SELECT COUNT(*) c FROM users').get()as any).c,4);assert.equal((db.prepare('SELECT name FROM products WHERE id=1').get()as any).name,'Test Product 001')});
