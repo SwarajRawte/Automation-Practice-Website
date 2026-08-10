@@ -32,6 +32,20 @@ SQLite data is stored at `DB_PATH` (default `data/testlab.db`). The application 
 | Read-only | viewer@testlab.local | Viewer123! |
 | Locked | locked@testlab.local | Locked123! |
 
+## Phase 1 authentication
+
+Phase 1 provides registration, simulated email verification, login/logout, remembered sessions, 15-minute JWT access tokens, rotating refresh tokens, forgot/reset password, authenticated password change, configurable five-attempt lockout, protected-route redirect, and Admin/User/Viewer authorization. Tokens used for verification, reset, and refresh are stored only as SHA-256 hashes. Passwords are stored with bcrypt.
+
+In test mode, registration and forgot-password responses expose deterministic tokens so automation never depends on email. Production-style mode omits these values. Authentication events are recorded in the `audit` table.
+
+Authentication routes:
+
+- `POST /api/auth/register`, `/verify`, `/login`, `/refresh`, `/logout`
+- `POST /api/auth/forgot`, `/reset-password`, `/change-password`
+- `GET /api/auth/me`
+
+Test controls require `TEST_MODE=true` and the `x-test-key` header matching `TEST_CONTROL_KEY`. They include database reset/seed, user lock/unlock, and refresh-session expiration.
+
 ## Commands
 
 `npm run dev`, `npm run build`, `npm start`, `npm test`, `npm run lint`, `npm run typecheck`, `npm run seed`, `npm run reset`.

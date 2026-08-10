@@ -11,6 +11,7 @@ import { db, reset, seed } from "./db.js";
 import { auth, roles, sign } from "./auth.js";
 import type { AuthRequest, Claims } from "./types.js";
 import { spec } from "./openapi.js";
+import { authRouter } from "./authRoutes.js";
 const app = express(),
   server = createServer(app),
   io = new Server(server, { cors: { origin: "*" } }),
@@ -23,6 +24,7 @@ app.use((q, r, n) => {
 });
 app.get("/api/health", (_q, r) => r.json({ status: "UP" }));
 app.use("/api/docs", swagger.serve, swagger.setup(spec));
+app.use("/api/auth", authRouter);
 app.post("/api/auth/login", (q, r) => {
   const u = db
     .prepare("SELECT * FROM users WHERE email=?")
@@ -130,31 +132,27 @@ app.get("/api/users", auth, roles("ADMIN"), (q, r) => {
 app.post("/api/forms", (q, r) =>
   q.body.email === "server-error@test.local"
     ? r.status(422).json({ error: "Server-side email rejection" })
-    : r
-        .status(201)
-        .json({
-          id: Number(
-            db
-              .prepare(
-                "INSERT INTO form_submissions(data,created_at) VALUES(?,?)",
-              )
-              .run(JSON.stringify(q.body), new Date().toISOString())
-              .lastInsertRowid,
-          ),
-          data: q.body,
-          message: "Form submitted successfully",
-        }),
+    : r.status(201).json({
+        id: Number(
+          db
+            .prepare(
+              "INSERT INTO form_submissions(data,created_at) VALUES(?,?)",
+            )
+            .run(JSON.stringify(q.body), new Date().toISOString())
+            .lastInsertRowid,
+        ),
+        data: q.body,
+        message: "Form submitted successfully",
+      }),
 );
 const upload = multer({ dest: "uploads/", limits: { fileSize: 5e6 } });
 app.post("/api/files/upload", upload.array("files", 5), (q, r) =>
-  r
-    .status(201)
-    .json({
-      files: (q.files as Express.Multer.File[]).map((f) => ({
-        name: f.originalname,
-        size: f.size,
-      })),
-    }),
+  r.status(201).json({
+    files: (q.files as Express.Multer.File[]).map((f) => ({
+      name: f.originalname,
+      size: f.size,
+    })),
+  }),
 );
 app.get("/api/files/download", (_q, r) =>
   r
@@ -165,13 +163,11 @@ app.all("/api/status/:code", (q, r) => {
   const c = Number(q.params.code);
   c === 204
     ? r.status(c).end()
-    : r
-        .status(c)
-        .json({
-          status: c,
-          message: `Simulated HTTP ${c}`,
-          requestId: r.get("x-request-id"),
-        });
+    : r.status(c).json({
+        status: c,
+        message: `Simulated HTTP ${c}`,
+        requestId: r.get("x-request-id"),
+      });
 });
 app.get("/api/delay/:ms", (q, r) =>
   setTimeout(
@@ -180,7 +176,12 @@ app.get("/api/delay/:ms", (q, r) =>
   ),
 );
 const only = (q: any, r: any, n: any) =>
-  testMode ? n() : r.status(404).json({ error: "Test controls disabled" });
+  !testMode
+    ? r.status(404).json({ error: "Test controls disabled" })
+    : q.get("x-test-key") ===
+        (process.env.TEST_CONTROL_KEY || "testlab-control")
+      ? n()
+      : r.status(403).json({ error: "Invalid test control key" });
 app.post("/api/test/reset", only, (_q, r) => {
   reset();
   r.json({ message: "Database reset" });
@@ -195,6 +196,26 @@ app.post("/api/test/events", only, (q, r) => {
   io.emit("test-event", q.body);
   r.json({ sent: true });
 });
+app.post("/api/test/users/:id/lock", only, (q, r) => {
+  const locked = q.body.locked === false ? 0 : 1;
+  db.prepare("UPDATE users SET locked=?,failed_attempts=? WHERE id=?").run(
+    locked,
+    locked ? Number(process.env.MAX_LOGIN_ATTEMPTS || 5) : 0,
+    String(q.params.id),
+  );
+  r.json({ id: Number(q.params.id), locked: Boolean(locked) });
+});
+app.post("/api/test/sessions/:userId/expire", only, (q, r) => {
+  const result = db
+    .prepare("UPDATE auth_tokens SET revoked=1 WHERE user_id=? AND type='refresh'")
+    .run(String(q.params.userId));
+  r.json({ userId: Number(q.params.userId), expiredSessions: Number(result.changes) });
+});
+app.get("/api/admin/audit", auth, roles("ADMIN"), (_q, r) =>
+  r.json({
+    data: db.prepare("SELECT * FROM audit ORDER BY id DESC LIMIT 100").all(),
+  }),
+);
 io.on("connection", (s) => {
   s.emit("status", { online: true, id: s.id });
   s.on("chat", (m) => io.emit("chat", { ...m, id: `msg-${Date.now()}` }));
