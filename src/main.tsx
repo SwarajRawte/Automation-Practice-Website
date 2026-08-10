@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BrowserRouter,
+  Navigate,
   NavLink,
   Route,
   Routes,
@@ -17,7 +18,7 @@ import {
 } from "./phase2";
 import "./styles.css";
 const modules = [
-  ["Dashboard", "/"],
+  ["Dashboard", "/dashboard"],
   ["Authentication", "/auth/login"],
   ["Forms", "/forms/basic"],
   ["Interactions", "/interactions/buttons"],
@@ -52,9 +53,112 @@ const api = async (url: string, init?: RequestInit) => {
     },
   });
   const data = r.status === 204 ? null : await r.json();
-  if (!r.ok) throw Error(data.error || `HTTP ${r.status}`);
+  if (!r.ok) {
+    if (r.status === 401 && !url.startsWith("/api/auth/")) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("refreshToken");
+      localStorage.removeItem("user");
+      window.location.replace(
+        `/auth/login?reason=session-expired&returnUrl=${encodeURIComponent(location.pathname)}`,
+      );
+    }
+    throw Error(data.error || `HTTP ${r.status}`);
+  }
   return data;
 };
+const clearAuthentication = () => {
+  localStorage.removeItem("token");
+  localStorage.removeItem("refreshToken");
+  localStorage.removeItem("user");
+};
+async function validateSession() {
+  const token = localStorage.getItem("token");
+  if (token) {
+    const response = await fetch("/api/auth/session", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (response.ok) {
+      const body = await response.json();
+      localStorage.setItem("user", JSON.stringify(body.user));
+      return body.user;
+    }
+  }
+  const refreshToken = localStorage.getItem("refreshToken");
+  if (refreshToken) {
+    const refreshed = await fetch("/api/auth/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken }),
+    });
+    if (refreshed.ok) {
+      const tokens = await refreshed.json();
+      localStorage.setItem("token", tokens.token);
+      localStorage.setItem("refreshToken", tokens.refreshToken);
+      const session = await fetch("/api/auth/session", {
+        headers: { authorization: `Bearer ${tokens.token}` },
+      });
+      if (session.ok) {
+        const body = await session.json();
+        localStorage.setItem("user", JSON.stringify(body.user));
+        return body.user;
+      }
+    }
+  }
+  clearAuthentication();
+  return null;
+}
+function AuthenticationLoading() {
+  return (
+    <main className="auth-loading" role="status" aria-live="polite">
+      <div className="spinner" />
+      Checking your session…
+    </main>
+  );
+}
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const loc = useLocation(),
+    nav = useNavigate(),
+    [state, setState] = useState<"loading" | "allowed" | "denied">("loading");
+  useEffect(() => {
+    let active = true;
+    const hadSession = Boolean(
+      localStorage.getItem("token") || localStorage.getItem("refreshToken"),
+    );
+    validateSession().then((user) => {
+      if (!active) return;
+      if (user) setState("allowed");
+      else {
+        setState("denied");
+        const reason = hadSession ? "&reason=session-expired" : "";
+        nav(
+          `/auth/login?returnUrl=${encodeURIComponent(loc.pathname + loc.search)}${reason}`,
+          { replace: true },
+        );
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+  if (state === "loading") return <AuthenticationLoading />;
+  return state === "allowed" ? <>{children}</> : null;
+}
+function PublicGate({ children }: { children: React.ReactNode }) {
+  const nav = useNavigate(),
+    [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    validateSession().then((user) => {
+      if (!active) return;
+      if (user) nav("/dashboard", { replace: true });
+      else setLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+  return loading ? <AuthenticationLoading /> : <>{children}</>;
+}
 function Info({
   name,
   concepts,
@@ -89,6 +193,21 @@ function Info({
 }
 function Layout() {
   const [open, setOpen] = useState(false);
+  const user = JSON.parse(localStorage.getItem("user") || "null");
+  const logout = async () => {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          refreshToken: localStorage.getItem("refreshToken"),
+        }),
+      });
+    } finally {
+      clearAuthentication();
+      window.location.replace("/auth/login");
+    }
+  };
   return (
     <div className="app">
       <a className="skip" href="#main">
@@ -115,16 +234,27 @@ function Layout() {
             ☰
           </button>
           <span data-testid="environment">TEST MODE</span>
+          <div data-testid="user-menu" className="user-menu">
+            <strong>{user?.name}</strong>
+            <small>{user?.role}</small>
+          </div>
           <button
             onClick={() => document.documentElement.classList.toggle("dark")}
           >
             ◐ Theme
           </button>
+          <button
+            data-testid="logout-button"
+            className="secondary"
+            onClick={logout}
+          >
+            Logout
+          </button>
         </header>
         <main id="main">
           <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/auth/*" element={<Auth />} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/forms/*" element={<Phase2Forms />} />
             <Route path="/interactions/*" element={<Phase2Interactions />} />
             <Route path="/alerts" element={<Phase2Dialogs />} />
@@ -153,7 +283,14 @@ function Layout() {
                 </Protected>
               }
             />
-            <Route path="/test-control" element={<TestControl />} />
+            <Route
+              path="/test-control"
+              element={
+                <Protected role="ADMIN">
+                  <TestControl />
+                </Protected>
+              }
+            />
             <Route path="*" element={<Errors />} />
           </Routes>
         </main>
@@ -162,12 +299,43 @@ function Layout() {
   );
 }
 function Dashboard() {
+  const user = JSON.parse(localStorage.getItem("user") || "null");
   return (
-    <>
+    <div data-testid="dashboard-page">
       <h2>Automation practice modules</h2>
+      <p>
+        Welcome, <strong>{user?.name}</strong>
+      </p>
+      <p>
+        Your role: <strong>{user?.role}</strong>
+      </p>
       <p className="lead">
         A deterministic, full-stack playground for browser and API automation.
       </p>
+      <div className="dashboard-tools">
+        <label>
+          Search modules
+          <input
+            aria-label="Module search"
+            placeholder="Search by module name"
+          />
+        </label>
+        <label>
+          Difficulty filter
+          <select aria-label="Difficulty filter">
+            <option>All difficulties</option>
+            <option>Beginner</option>
+            <option>Intermediate</option>
+            <option>Advanced</option>
+          </select>
+        </label>
+        <label>
+          Progress
+          <progress max="100" value="0">
+            0%
+          </progress>
+        </label>
+      </div>
       {[
         "Beginner",
         "Intermediate",
@@ -192,7 +360,7 @@ function Dashboard() {
           </div>
         </section>
       ))}
-    </>
+    </div>
   );
 }
 function Protected({
@@ -222,15 +390,15 @@ function Protected({
   return <>{children}</>;
 }
 function Auth() {
-  const nav = useNavigate(),
-    loc = useLocation(),
+  const loc = useLocation(),
     mode = loc.pathname.split("/").pop() || "login",
     [show, setShow] = useState(false),
     [msg, setMsg] = useState(""),
+    [submitting, setSubmitting] = useState(false),
     [form, set] = useState({
       name: "Automation Tester",
       email: "admin@testlab.local",
-      password: "Admin123!",
+      password: "",
       currentPassword: "",
       confirmPassword: "",
       token: "",
@@ -241,26 +409,28 @@ function Auth() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg("");
+    setSubmitting(true);
     try {
       if (mode === "login") {
         const x = await api("/api/auth/login", {
           method: "POST",
-          body: JSON.stringify(form),
+          body: JSON.stringify({ ...form, rememberMe: form.remember }),
         });
         localStorage.setItem("token", x.token);
         localStorage.setItem("refreshToken", x.refreshToken);
         localStorage.setItem("user", JSON.stringify(x.user));
         setMsg(`Welcome ${x.user.name}`);
-        const redirect = new URLSearchParams(loc.search).get("redirect") || "/";
-        setTimeout(() => nav(redirect), 300);
+        const redirect =
+          new URLSearchParams(loc.search).get("returnUrl") || "/dashboard";
+        window.location.replace(redirect);
       } else if (mode === "register") {
         const x = await api("/api/auth/register", {
           method: "POST",
           body: JSON.stringify(form),
         });
         setMsg(`${x.message}. Test token: ${x.verificationToken}`);
-      } else if (mode === "forgot") {
-        const x = await api("/api/auth/forgot", {
+      } else if (mode === "forgot" || mode === "forgot-password") {
+        const x = await api("/api/auth/forgot-password", {
           method: "POST",
           body: JSON.stringify({ email: form.email }),
         });
@@ -295,167 +465,194 @@ function Auth() {
       }
     } catch (error: any) {
       setMsg(error.message);
+      if (mode === "login") set({ ...form, password: "" });
+    } finally {
+      setSubmitting(false);
     }
-  };
-  const logout = async () => {
-    await api("/api/auth/logout", {
-      method: "POST",
-      body: JSON.stringify({
-        refreshToken: localStorage.getItem("refreshToken"),
-      }),
-    });
-    localStorage.removeItem("token");
-    localStorage.removeItem("refreshToken");
-    localStorage.removeItem("user");
-    nav("/auth/login");
   };
   const title: { [key: string]: string } = {
     login: "Sign in",
     register: "Register",
     forgot: "Forgot password",
+    "forgot-password": "Forgot password",
     "reset-password": "Reset password",
     verify: "Verify email",
     "change-password": "Change password",
   };
   return (
-    <>
-      <h2>Authentication · {title[mode] || mode}</h2>
-      <div className="actions">
-        <NavLink className="button" to="/auth/login">
-          Login
-        </NavLink>
-        <NavLink className="button secondary" to="/auth/register">
-          Register
-        </NavLink>
-        <NavLink className="button secondary" to="/auth/forgot">
-          Forgot password
-        </NavLink>
-        <NavLink className="button secondary" to="/auth/change-password">
-          Change password
-        </NavLink>
-      </div>
-      <form className="panel form" onSubmit={submit}>
-        {mode === "register" && (
-          <label>
-            Name
-            <input
-              id="name"
-              name="name"
-              value={form.name}
-              onChange={(e) => update("name", e.target.value)}
-              required
-            />
-          </label>
+    <main
+      className="login-shell"
+      data-testid={mode === "login" ? "login-page" : `auth-${mode}-page`}
+    >
+      <section className="login-card">
+        <div className="login-brand" aria-label="E2E Test Lab">
+          <span className="login-logo">E2E</span>
+          <div>
+            <h1>E2E Test Lab</h1>
+            <p>Automation practice environment</p>
+          </div>
+        </div>
+        {new URLSearchParams(loc.search).get("reason") ===
+          "session-expired" && (
+          <div role="alert" className="session-message">
+            Your session has expired. Please log in again.
+          </div>
         )}
-        {["login", "register", "forgot"].includes(mode) && (
-          <label>
-            Email
-            <input
-              id="email"
-              name="email"
-              type="email"
-              value={form.email}
-              onChange={(e) => update("email", e.target.value)}
-              required
-            />
-          </label>
+        <h2>{title[mode] || mode}</h2>
+        {mode !== "login" && (
+          <div className="actions">
+            <NavLink className="button" to="/auth/login">
+              Login
+            </NavLink>
+            <NavLink className="button secondary" to="/auth/register">
+              Register
+            </NavLink>
+            <NavLink className="button secondary" to="/auth/forgot-password">
+              Forgot password
+            </NavLink>
+          </div>
         )}
-        {mode === "change-password" && (
-          <label>
-            Current password
-            <input
-              name="currentPassword"
-              type={show ? "text" : "password"}
-              value={form.currentPassword}
-              onChange={(e) => update("currentPassword", e.target.value)}
-              required
-            />
-          </label>
-        )}
-        {["login", "register", "reset-password", "change-password"].includes(
-          mode,
-        ) && (
-          <label>
-            {mode === "change-password" ? "New password" : "Password"}
-            <input
-              id="password"
-              name="password"
-              type={show ? "text" : "password"}
-              value={form.password}
-              onChange={(e) => update("password", e.target.value)}
-              minLength={8}
-              required
-            />
-          </label>
-        )}
-        {["reset-password", "change-password"].includes(mode) && (
-          <label>
-            Confirm password
-            <input
-              name="confirmPassword"
-              type={show ? "text" : "password"}
-              value={form.confirmPassword}
-              onChange={(e) => update("confirmPassword", e.target.value)}
-              required
-            />
-          </label>
-        )}
-        {["verify", "reset-password"].includes(mode) && (
-          <label>
-            Test token
-            <input
-              name="token"
-              value={form.token}
-              onChange={(e) => update("token", e.target.value)}
-              required
-            />
-          </label>
-        )}
-        {["login", "register", "reset-password", "change-password"].includes(
-          mode,
-        ) && (
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={show}
-              onChange={(e) => setShow(e.target.checked)}
-            />
-            Show passwords
-          </label>
-        )}
+        <form className="panel form" onSubmit={submit}>
+          {mode === "register" && (
+            <label>
+              Name
+              <input
+                id="name"
+                name="name"
+                value={form.name}
+                onChange={(e) => update("name", e.target.value)}
+                required
+              />
+            </label>
+          )}
+          {["login", "register", "forgot", "forgot-password"].includes(
+            mode,
+          ) && (
+            <label>
+              Email
+              <input
+                id="email"
+                name="email"
+                type="email"
+                data-testid={mode === "login" ? "login-email" : undefined}
+                value={form.email}
+                onChange={(e) => update("email", e.target.value)}
+                required
+              />
+            </label>
+          )}
+          {mode === "change-password" && (
+            <label>
+              Current password
+              <input
+                name="currentPassword"
+                type={show ? "text" : "password"}
+                value={form.currentPassword}
+                onChange={(e) => update("currentPassword", e.target.value)}
+                required
+              />
+            </label>
+          )}
+          {["login", "register", "reset-password", "change-password"].includes(
+            mode,
+          ) && (
+            <label>
+              {mode === "change-password" ? "New password" : "Password"}
+              <input
+                id="password"
+                name="password"
+                type={show ? "text" : "password"}
+                data-testid={mode === "login" ? "login-password" : undefined}
+                value={form.password}
+                onChange={(e) => update("password", e.target.value)}
+                minLength={8}
+                required
+              />
+            </label>
+          )}
+          {["reset-password", "change-password"].includes(mode) && (
+            <label>
+              Confirm password
+              <input
+                name="confirmPassword"
+                type={show ? "text" : "password"}
+                value={form.confirmPassword}
+                onChange={(e) => update("confirmPassword", e.target.value)}
+                required
+              />
+            </label>
+          )}
+          {["verify", "reset-password"].includes(mode) && (
+            <label>
+              Test token
+              <input
+                name="token"
+                value={form.token}
+                onChange={(e) => update("token", e.target.value)}
+                required
+              />
+            </label>
+          )}
+          {["login", "register", "reset-password", "change-password"].includes(
+            mode,
+          ) && (
+            <button type="button" className="secondary" data-testid="toggle-password" aria-pressed={show} onClick={() => setShow(!show)}>
+              {show ? "Hide password" : "Show password"}
+            </button>
+          )}
+          {mode === "login" && (
+            <label className="check">
+              <input
+                type="checkbox"
+                data-testid="remember-me"
+                checked={form.remember}
+                onChange={(e) => update("remember", e.target.checked)}
+              />
+              Remember me
+            </label>
+          )}
+          <button
+            data-testid={mode === "login" ? "login-submit" : "auth-submit"}
+            disabled={submitting}
+          >
+            {submitting ? "Signing in…" : title[mode] || "Submit"}
+          </button>
+          <output
+            role="alert"
+            data-testid={mode === "login" ? "login-error" : undefined}
+          >
+            {msg}
+          </output>
+        </form>
         {mode === "login" && (
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={form.remember}
-              onChange={(e) => update("remember", e.target.checked)}
-            />
-            Remember me
-          </label>
+          <div className="login-links">
+            <NavLink
+              data-testid="forgot-password-link"
+              to="/auth/forgot-password"
+            >
+              Forgot password?
+            </NavLink>
+            <NavLink data-testid="register-link" to="/auth/register">
+              Create an account
+            </NavLink>
+          </div>
         )}
-        <button data-testid="auth-submit">{title[mode] || "Submit"}</button>
-        <output role="status">{msg}</output>
-      </form>
-      {localStorage.getItem("user") && (
-        <button className="secondary" onClick={logout}>
-          Log out current session
-        </button>
-      )}
-      <Info
-        name={`Authentication: ${title[mode] || mode}`}
-        concepts="Registration, verification, lockout, password reset/change, refresh tokens, logout, redirect, RBAC"
-        apiEndpoints={[
-          "POST /api/auth/login",
-          "POST /api/auth/refresh",
-          "POST /api/auth/logout",
-          "POST /api/auth/register",
-          "POST /api/auth/verify",
-          "POST /api/auth/forgot",
-          "POST /api/auth/reset-password",
-          "POST /api/auth/change-password",
-        ]}
-      />
-    </>
+        <Info
+          name={`Authentication: ${title[mode] || mode}`}
+          concepts="Registration, verification, lockout, password reset/change, refresh tokens, logout, redirect, RBAC"
+          apiEndpoints={[
+            "POST /api/auth/login",
+            "POST /api/auth/refresh",
+            "POST /api/auth/logout",
+            "POST /api/auth/register",
+            "POST /api/auth/verify",
+            "POST /api/auth/forgot",
+            "POST /api/auth/reset-password",
+            "POST /api/auth/change-password",
+          ]}
+        />
+      </section>
+    </main>
   );
 }
 export function Forms() {
@@ -1287,10 +1484,46 @@ function TestControl() {
     </>
   );
 }
+function ApplicationRoutes() {
+  return (
+    <Routes>
+      <Route
+        path="/auth/change-password"
+        element={
+          <AuthGate>
+            <Auth />
+          </AuthGate>
+        }
+      />
+      {["login", "register", "forgot-password", "reset-password", "verify"].map(
+        (route) => (
+          <Route
+            key={route}
+            path={`/auth/${route}`}
+            element={
+              <PublicGate>
+                <Auth />
+              </PublicGate>
+            }
+          />
+        ),
+      )}
+      <Route path="/auth/*" element={<Navigate to="/auth/login" replace />} />
+      <Route
+        path="/*"
+        element={
+          <AuthGate>
+            <Layout />
+          </AuthGate>
+        }
+      />
+    </Routes>
+  );
+}
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <Layout />
+      <ApplicationRoutes />
     </BrowserRouter>
   </React.StrictMode>,
 );

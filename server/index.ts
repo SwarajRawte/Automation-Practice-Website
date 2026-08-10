@@ -5,12 +5,10 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import bcrypt from "bcryptjs";
 import multer from "multer";
 import swagger from "swagger-ui-express";
 import { db, reset, seed } from "./db.js";
-import { auth, roles, sign } from "./auth.js";
-import type { AuthRequest, Claims } from "./types.js";
+import { auth, roles } from "./auth.js";
 import { spec } from "./openapi.js";
 import { authRouter } from "./authRoutes.js";
 const app = express(),
@@ -26,49 +24,7 @@ app.use((q, r, n) => {
 app.get("/api/health", (_q, r) => r.json({ status: "UP" }));
 app.use("/api/docs", swagger.serve, swagger.setup(spec));
 app.use("/api/auth", authRouter);
-app.post("/api/auth/login", (q, r) => {
-  const u = db
-    .prepare("SELECT * FROM users WHERE email=?")
-    .get(q.body.email) as any;
-  if (!u || !bcrypt.compareSync(q.body.password || "", u.password)) {
-    if (u)
-      db.prepare(
-        "UPDATE users SET failed_attempts=failed_attempts+1 WHERE id=?",
-      ).run(u.id);
-    return r.status(401).json({ error: "Invalid email or password" });
-  }
-  if (u.locked) return r.status(423).json({ error: "Account is locked" });
-  const user: Claims = { id: u.id, email: u.email, name: u.name, role: u.role };
-  r.json({ token: sign(user, q.body.remember ? "7d" : "2h"), user });
-});
-app.post("/api/auth/register", (q, r) => {
-  const { email, password, name } = q.body;
-  if (
-    !email ||
-    !name ||
-    !/(?=.*[A-Z])(?=.*\d)(?=.*[^\w]).{8,}/.test(password || "")
-  )
-    return r
-      .status(422)
-      .json({ error: "Use a name, email, and strong password" });
-  try {
-    const x = db
-      .prepare(
-        "INSERT INTO users(email,name,password,role,verified) VALUES(?,?,?,'USER',0)",
-      )
-      .run(email, name, bcrypt.hashSync(password, 10));
-    r.status(201).json({
-      id: Number(x.lastInsertRowid),
-      verificationCode: "TEST-VERIFY-123",
-    });
-  } catch {
-    return r.status(409).json({ error: "Email already registered" });
-  }
-});
-app.get("/api/auth/me", auth, (q: AuthRequest, r) => r.json(q.user));
-app.post("/api/auth/forgot", (_q, r) =>
-  r.json({ message: "Reset email simulated", resetCode: "RESET-123" }),
-);
+app.use("/api", auth);
 app.get("/api/products", (q, r) => {
   const page = Math.max(1, Number(q.query.page) || 1),
     size = Math.min(100, Number(q.query.size) || 10),
@@ -251,7 +207,10 @@ io.on("connection", (s) => {
   s.emit("status", { online: true, id: s.id });
   s.on("chat", (m) => io.emit("chat", { ...m, id: `msg-${Date.now()}` }));
 });
-const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist");
+const dist = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../dist",
+);
 if (fs.existsSync(dist)) {
   app.use(express.static(dist));
   const indexHtml = fs.readFileSync(path.join(dist, "index.html"), "utf8");

@@ -36,13 +36,17 @@ SQLite data is stored at `DB_PATH` (default `data/testlab.db`). The application 
 
 Phase 1 provides registration, simulated email verification, login/logout, remembered sessions, 15-minute JWT access tokens, rotating refresh tokens, forgot/reset password, authenticated password change, configurable five-attempt lockout, protected-route redirect, and Admin/User/Viewer authorization. Tokens used for verification, reset, and refresh are stored only as SHA-256 hashes. Passwords are stored with bcrypt.
 
+Authentication is mandatory. Opening `/` or any module without a valid session shows only `/auth/login`; after login the application opens `/dashboard`. Direct protected URLs are preserved in `returnUrl`. The sidebar and application shell are never rendered until `GET /api/auth/session` succeeds. Authenticated users visiting `/` or `/auth/login` are redirected to `/dashboard`.
+
+Access tokens are accepted through the authorization header and an HTTP-only same-site cookie. Logout revokes refresh tokens, increments the server-side session version to invalidate access tokens, clears browser authentication, and replaces browser history with the login route. See [AUTH_FLOW.md](AUTH_FLOW.md).
+
 In test mode, registration and forgot-password responses expose deterministic tokens so automation never depends on email. Production-style mode omits these values. Authentication events are recorded in the `audit` table.
 
 Authentication routes:
 
 - `POST /api/auth/register`, `/verify`, `/login`, `/refresh`, `/logout`
-- `POST /api/auth/forgot`, `/reset-password`, `/change-password`
-- `GET /api/auth/me`
+- `POST /api/auth/forgot-password`, `/reset-password`, `/change-password`
+- `GET /api/auth/session` (`/me` remains a compatibility alias)
 
 Test controls require `TEST_MODE=true` and the `x-test-key` header matching `TEST_CONTROL_KEY`. They include database reset/seed, user lock/unlock, and refresh-session expiration.
 

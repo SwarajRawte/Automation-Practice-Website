@@ -10,7 +10,9 @@ Assert both UI feedback and backend state. Run tests independently, seed/reset d
 
 Use the four fixed accounts for role assertions. Five wrong passwords lock a normal account; reset restores it. New registrations are unverified until `/api/auth/verify` consumes the returned test token. Refresh tokens rotate, so the previous token must fail after refresh. Logout and `POST /api/test/sessions/:userId/expire` revoke refresh sessions. Send `x-test-key: testlab-control` to test-control endpoints under the default local configuration.
 
-Protected UI routes preserve their original URL in the login `redirect` query parameter. Assert that unauthenticated access redirects to login, successful login returns to the original route, and non-admin users receive a visible 403 on `/admin` while the protected API also returns HTTP 403.
+Protected UI routes preserve their original URL in the login `returnUrl` query parameter. Assert that unauthenticated access redirects to login, successful login returns to the original route, and non-admin users receive a visible 403 on `/admin` while the protected API also returns HTTP 403.
+
+For example, `/auth/login?returnUrl=/tables/dynamic`. Login failures preserve the email and consistently clear the password. During startup, assert the session-loading status rather than the dashboard. Expired sessions add `reason=session-expired` and show “Your session has expired. Please log in again.”
 
 ## Phase 2 scenarios
 

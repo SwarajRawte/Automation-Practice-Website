@@ -3,7 +3,11 @@ import { useLocation, useNavigate } from "react-router-dom";
 const jsonApi = async (url: string, init?: RequestInit) => {
   const r = await fetch(url, {
       ...init,
-      headers: { "content-type": "application/json", ...init?.headers },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${localStorage.getItem("token") || ""}`,
+        ...init?.headers,
+      },
     }),
     body = await r.json();
   if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
