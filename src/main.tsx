@@ -9,6 +9,12 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { io } from "socket.io-client";
+import {
+  Phase2Forms,
+  Phase2Interactions,
+  Phase2Dialogs,
+  Phase2Contexts,
+} from "./phase2";
 import "./styles.css";
 const modules = [
   ["Dashboard", "/"],
@@ -119,11 +125,12 @@ function Layout() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/auth/*" element={<Auth />} />
-            <Route path="/forms/*" element={<Forms />} />
-            <Route path="/interactions/*" element={<Interactions />} />
-            <Route path="/alerts" element={<Alerts />} />
-            <Route path="/windows" element={<Windows />} />
-            <Route path="/frames" element={<Windows />} />
+            <Route path="/forms/*" element={<Phase2Forms />} />
+            <Route path="/interactions/*" element={<Phase2Interactions />} />
+            <Route path="/alerts" element={<Phase2Dialogs />} />
+            <Route path="/modals" element={<Phase2Dialogs />} />
+            <Route path="/windows" element={<Phase2Contexts />} />
+            <Route path="/frames" element={<Phase2Contexts />} />
             <Route path="/tables/*" element={<Tables />} />
             <Route path="/crud/products" element={<Products />} />
             <Route path="/shop/*" element={<Shop />} />
@@ -451,7 +458,7 @@ function Auth() {
     </>
   );
 }
-function Forms() {
+export function Forms() {
   const [msg, setMsg] = useState("");
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -540,7 +547,7 @@ function Forms() {
     </>
   );
 }
-function Interactions() {
+export function Interactions() {
   const [log, setLog] = useState<string[]>([]),
     add = (x: string) => setLog((v) => [x, ...v]);
   return (
@@ -586,7 +593,7 @@ function Interactions() {
     </>
   );
 }
-function Alerts() {
+export function Alerts() {
   const [result, setResult] = useState("No response");
   const [modal, setModal] = useState(false);
   return (
@@ -640,7 +647,7 @@ function Alerts() {
     </>
   );
 }
-function Windows() {
+export function Windows() {
   return (
     <>
       <h2>Windows, tabs & frames</h2>

@@ -25,12 +25,12 @@ SQLite data is stored at `DB_PATH` (default `data/testlab.db`). The application 
 
 ## Test accounts
 
-| Role | Email | Password |
-|---|---|---|
-| Admin | admin@testlab.local | Admin123! |
-| Standard | user@testlab.local | User123! |
+| Role      | Email                | Password   |
+| --------- | -------------------- | ---------- |
+| Admin     | admin@testlab.local  | Admin123!  |
+| Standard  | user@testlab.local   | User123!   |
 | Read-only | viewer@testlab.local | Viewer123! |
-| Locked | locked@testlab.local | Locked123! |
+| Locked    | locked@testlab.local | Locked123! |
 
 ## Phase 1 authentication
 
@@ -55,6 +55,17 @@ Test controls require `TEST_MODE=true` and the `x-test-key` header matching `TES
 Vite serves the React/TypeScript client in development and proxies REST/WebSocket traffic to Express. Express serves the production bundle, JWT authentication, SQLite-backed data, uploads, test controls, Swagger, and Socket.IO.
 
 Practice routes include `/auth/login`, `/forms/basic`, `/interactions/buttons`, `/alerts`, `/windows`, `/frames`, `/tables/dynamic`, `/crud/products`, `/shop/products`, `/files/upload`, `/dynamic-elements?delay=3000`, `/shadow-dom`, `/storage`, `/api-playground`, `/realtime`, `/accessibility/good`, `/visual?freeze=true`, `/responsive`, `/i18n`, `/errors`, `/admin`, and `/test-control`.
+
+## Phase 2 practice routes
+
+- Forms: `/forms/basic`, `/forms/validation`, `/forms/dynamic`, `/forms/confirmation`
+- Mouse and links: `/interactions/buttons`
+- Keyboard events and accessible listbox/modal: `/interactions/keyboard`
+- Native dialogs, custom/nested/form/non-dismissible modals, and notifications: `/alerts`, `/modals`
+- Browser tabs and child windows: `/windows`
+- Basic, multiple, form, nested, and dynamic frames: `/frames`
+
+Form submissions use real persistence through `POST /api/forms`; confirmation records are available at `GET /api/forms/:id`. The deterministic server-error address is `server-error@test.local`.
 
 ## Environment
 

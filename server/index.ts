@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import path from "node:path";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
 import bcrypt from "bcryptjs";
@@ -129,22 +130,47 @@ app.get("/api/users", auth, roles("ADMIN"), (q, r) => {
     total: 100,
   });
 });
-app.post("/api/forms", (q, r) =>
-  q.body.email === "server-error@test.local"
-    ? r.status(422).json({ error: "Server-side email rejection" })
-    : r.status(201).json({
-        id: Number(
-          db
-            .prepare(
-              "INSERT INTO form_submissions(data,created_at) VALUES(?,?)",
-            )
-            .run(JSON.stringify(q.body), new Date().toISOString())
-            .lastInsertRowid,
-        ),
-        data: q.body,
-        message: "Form submitted successfully",
-      }),
-);
+app.post("/api/forms", (q, r) => {
+  const errors: Record<string, string> = {};
+  if (!q.body.name || String(q.body.name).length < 2)
+    errors.name = "Name must contain at least 2 characters";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(q.body.email || "")))
+    errors.email = "A valid email is required";
+  if (q.body.email === "server-error@test.local")
+    errors.email = "This email is rejected by the server test scenario";
+  if (q.body.password !== q.body.confirmPassword)
+    errors.confirmPassword = "Passwords must match";
+  if (
+    q.body.quantity &&
+    (Number(q.body.quantity) < 1 || Number(q.body.quantity) > 10)
+  )
+    errors.quantity = "Quantity must be between 1 and 10";
+  if (q.body.employment === "Employed" && !q.body.company)
+    errors.company = "Company is required when employed";
+  if (Object.keys(errors).length)
+    return r.status(422).json({ error: "Form validation failed", errors });
+  const id = Number(
+    db
+      .prepare("INSERT INTO form_submissions(data,created_at) VALUES(?,?)")
+      .run(JSON.stringify(q.body), new Date().toISOString()).lastInsertRowid,
+  );
+  return r
+    .status(201)
+    .json({ id, data: q.body, message: "Form submitted successfully" });
+});
+app.get("/api/forms/:id", (q, r) => {
+  const row = db
+    .prepare("SELECT * FROM form_submissions WHERE id=?")
+    .get(String(q.params.id)) as
+    { id: number; data: string; created_at: string } | undefined;
+  return row
+    ? r.json({
+        id: row.id,
+        data: JSON.parse(row.data),
+        createdAt: row.created_at,
+      })
+    : r.status(404).json({ error: "Form submission not found" });
+});
 const upload = multer({ dest: "uploads/", limits: { fileSize: 5e6 } });
 app.post("/api/files/upload", upload.array("files", 5), (q, r) =>
   r.status(201).json({
@@ -207,9 +233,14 @@ app.post("/api/test/users/:id/lock", only, (q, r) => {
 });
 app.post("/api/test/sessions/:userId/expire", only, (q, r) => {
   const result = db
-    .prepare("UPDATE auth_tokens SET revoked=1 WHERE user_id=? AND type='refresh'")
+    .prepare(
+      "UPDATE auth_tokens SET revoked=1 WHERE user_id=? AND type='refresh'",
+    )
     .run(String(q.params.userId));
-  r.json({ userId: Number(q.params.userId), expiredSessions: Number(result.changes) });
+  r.json({
+    userId: Number(q.params.userId),
+    expiredSessions: Number(result.changes),
+  });
 });
 app.get("/api/admin/audit", auth, roles("ADMIN"), (_q, r) =>
   r.json({
@@ -220,10 +251,11 @@ io.on("connection", (s) => {
   s.emit("status", { online: true, id: s.id });
   s.on("chat", (m) => io.emit("chat", { ...m, id: `msg-${Date.now()}` }));
 });
-const dist = path.resolve("dist");
+const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist");
 if (fs.existsSync(dist)) {
   app.use(express.static(dist));
-  app.use((_q, r) => r.sendFile(path.join(dist, "index.html")));
+  const indexHtml = fs.readFileSync(path.join(dist, "index.html"), "utf8");
+  app.use((_q, r) => r.type("html").send(indexHtml));
 }
 server.listen(Number(process.env.PORT || 3000), () =>
   console.log("E2E Test Lab ready"),

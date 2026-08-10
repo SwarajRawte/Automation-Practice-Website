@@ -1,1 +1,56 @@
-{"name":"e2e-test-lab","version":"1.0.0","private":true,"type":"module","scripts":{"dev":"concurrently \"tsx watch server/index.ts\" \"vite\"","build":"tsc -b && vite build","start":"tsx server/index.ts","test":"tsx --test server/**/*.test.ts","seed":"tsx server/scripts/seed.ts","reset":"tsx server/scripts/reset.ts","lint":"eslint .","typecheck":"tsc -b"},"dependencies":{"@vitejs/plugin-react":"latest","bcryptjs":"latest","cors":"latest","express":"latest","jsonwebtoken":"latest","multer":"latest","react":"latest","react-dom":"latest","react-router-dom":"latest","socket.io":"latest","socket.io-client":"latest","swagger-ui-express":"latest","tsx":"latest","vite":"latest"},"devDependencies":{"@eslint/js":"latest","@types/bcryptjs":"latest","@types/cors":"latest","@types/express":"latest","@types/jsonwebtoken":"latest","@types/multer":"latest","@types/node":"latest","@types/react":"latest","@types/react-dom":"latest","@types/supertest":"^7.2.1","@types/swagger-ui-express":"latest","concurrently":"latest","eslint":"latest","eslint-plugin-react-hooks":"latest","globals":"latest","prettier":"^3.9.6","supertest":"^7.2.2","typescript":"latest","typescript-eslint":"latest"},"engines":{"node":">=22.5"}}
+{
+  "name": "e2e-test-lab",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"tsx watch server/index.ts\" \"vite\"",
+    "build": "tsc -b && vite build",
+    "start": "tsx server/index.ts",
+    "test": "tsx --test --test-concurrency=1 server/**/*.test.ts",
+    "seed": "tsx server/scripts/seed.ts",
+    "reset": "tsx server/scripts/reset.ts",
+    "lint": "eslint .",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "bcryptjs": "latest",
+    "cors": "latest",
+    "express": "latest",
+    "jsonwebtoken": "latest",
+    "multer": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-router-dom": "latest",
+    "socket.io": "latest",
+    "socket.io-client": "latest",
+    "swagger-ui-express": "latest",
+    "tsx": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@types/bcryptjs": "latest",
+    "@types/cors": "latest",
+    "@types/express": "latest",
+    "@types/jsonwebtoken": "latest",
+    "@types/multer": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/supertest": "^7.2.1",
+    "@types/swagger-ui-express": "latest",
+    "concurrently": "latest",
+    "eslint": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "globals": "latest",
+    "prettier": "^3.9.6",
+    "supertest": "^7.2.2",
+    "typescript": "latest",
+    "typescript-eslint": "latest"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}
