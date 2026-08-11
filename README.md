@@ -71,6 +71,16 @@ Practice routes include `/auth/login`, `/forms/basic`, `/interactions/buttons`, 
 
 Form submissions use real persistence through `POST /api/forms`; confirmation records are available at `GET /api/forms/:id`. The deterministic server-error address is `server-error@test.local`.
 
+## Phase 3 data and synchronization labs
+
+- Tables: `/tables/static`, `/tables/dynamic`, `/tables/virtual`
+- Persistent product CRUD: `/crud/products`
+- Uploads and downloads: `/files/upload`, `/files/download`
+- Wait and synchronization scenarios: `/dynamic-elements?delay=1500&deterministic=true`
+- Web components: `/shadow-dom`
+
+Table data contains exactly 100 generated users and supports server pagination, filtering, and multi-column sorting. Product writes require Admin, use optimistic version checks, preserve history, soft-delete with deterministic undo tokens, and return 409 for duplicate names/conflicts. Uploads persist in SQLite, accept TXT/CSV/PDF/PNG/JPEG up to 5 MB, and reject zero-byte, duplicate, disallowed, and simulated-failure scenarios.
+
 ## Environment
 
 See `.env.example`. Test-control endpoints are unavailable when `TEST_MODE=false`. Always replace `JWT_SECRET` outside local development. No payment/email provider or hardware permission is contacted.

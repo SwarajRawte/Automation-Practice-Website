@@ -16,6 +16,13 @@ import {
   Phase2Dialogs,
   Phase2Contexts,
 } from "./phase2";
+import {
+  Phase3Tables,
+  Phase3Products,
+  Phase3Files,
+  Phase3Dynamic,
+  Phase3ShadowDom,
+} from "./phase3";
 import "./styles.css";
 const modules = [
   ["Dashboard", "/dashboard"],
@@ -261,12 +268,12 @@ function Layout() {
             <Route path="/modals" element={<Phase2Dialogs />} />
             <Route path="/windows" element={<Phase2Contexts />} />
             <Route path="/frames" element={<Phase2Contexts />} />
-            <Route path="/tables/*" element={<Tables />} />
-            <Route path="/crud/products" element={<Products />} />
+            <Route path="/tables/*" element={<Phase3Tables />} />
+            <Route path="/crud/products" element={<Phase3Products />} />
             <Route path="/shop/*" element={<Shop />} />
-            <Route path="/files/*" element={<Files />} />
-            <Route path="/dynamic-elements" element={<Dynamic />} />
-            <Route path="/shadow-dom" element={<Shadow />} />
+            <Route path="/files/*" element={<Phase3Files />} />
+            <Route path="/dynamic-elements" element={<Phase3Dynamic />} />
+            <Route path="/shadow-dom" element={<Phase3ShadowDom />} />
             <Route path="/storage" element={<Storage />} />
             <Route path="/api-playground" element={<ApiPlay />} />
             <Route path="/realtime" element={<Realtime />} />
@@ -596,7 +603,13 @@ function Auth() {
           {["login", "register", "reset-password", "change-password"].includes(
             mode,
           ) && (
-            <button type="button" className="secondary" data-testid="toggle-password" aria-pressed={show} onClick={() => setShow(!show)}>
+            <button
+              type="button"
+              className="secondary"
+              data-testid="toggle-password"
+              aria-pressed={show}
+              onClick={() => setShow(!show)}
+            >
               {show ? "Hide password" : "Show password"}
             </button>
           )}
@@ -883,7 +896,7 @@ export function Windows() {
     </>
   );
 }
-function Tables() {
+export function Tables() {
   const [rows, setRows] = useState<any[]>([]),
     [sort, setSort] = useState<"id" | "name">("id"),
     [q, setQ] = useState("");
@@ -1031,7 +1044,7 @@ function Shop() {
     </>
   );
 }
-function Files() {
+export function Files() {
   const [msg, setMsg] = useState("");
   const send = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1063,7 +1076,7 @@ function Files() {
     </>
   );
 }
-function Dynamic() {
+export function Dynamic() {
   const p = new URLSearchParams(location.search),
     delay = Number(p.get("delay") || 1500),
     [state, setState] = useState("Loading…");
@@ -1110,7 +1123,7 @@ class LabElement extends HTMLElement {
 }
 customElements.get("lab-element") ||
   customElements.define("lab-element", LabElement);
-function Shadow() {
+export function Shadow() {
   return (
     <>
       <h2>Shadow DOM & web components</h2>

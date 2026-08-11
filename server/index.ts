@@ -11,6 +11,7 @@ import { db, reset, seed } from "./db.js";
 import { auth, roles } from "./auth.js";
 import { spec } from "./openapi.js";
 import { authRouter } from "./authRoutes.js";
+import { phase3Router } from "./phase3Routes.js";
 const app = express(),
   server = createServer(app),
   io = new Server(server, { cors: { origin: "*" } }),
@@ -25,6 +26,7 @@ app.get("/api/health", (_q, r) => r.json({ status: "UP" }));
 app.use("/api/docs", swagger.serve, swagger.setup(spec));
 app.use("/api/auth", authRouter);
 app.use("/api", auth);
+app.use("/api", phase3Router);
 app.get("/api/products", (q, r) => {
   const page = Math.max(1, Number(q.query.page) || 1),
     size = Math.min(100, Number(q.query.size) || 10),
