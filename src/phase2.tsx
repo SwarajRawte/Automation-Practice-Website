@@ -1,5 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { TestInfoPanel } from "./components/testing/TestInfoPanel";
+import { PageHeader } from "./components/layout/PageHeader";
+import {
+  AppWindow,
+  FormInput,
+  Keyboard,
+  MousePointerClick,
+  PanelTopOpen,
+} from "lucide-react";
 const jsonApi = async (url: string, init?: RequestInit) => {
   const r = await fetch(url, {
       ...init,
@@ -23,28 +32,7 @@ function TestInfo({
   endpoints?: string;
 }) {
   return (
-    <details className="info" open>
-      <summary>Test Information</summary>
-      <dl>
-        <dt>Page</dt>
-        <dd>{name}</dd>
-        <dt>URL</dt>
-        <dd>{location.pathname}</dd>
-        <dt>Concepts</dt>
-        <dd>{concepts}</dd>
-        <dt>Recommended locators</dt>
-        <dd>Accessible role/name, id, name, data-testid</dd>
-        <dt>Expected behavior</dt>
-        <dd>Every action produces deterministic visible output.</dd>
-        <dt>Suggested assertions</dt>
-        <dd>
-          Status text, event log, validation summary, persisted confirmation
-        </dd>
-        <dt>Relevant APIs</dt>
-        <dd>{endpoints}</dd>
-      </dl>
-      <button onClick={() => location.reload()}>Reset module</button>
-    </details>
+    <TestInfoPanel name={name} concepts={concepts} endpoints={endpoints} />
   );
 }
 export function Phase2Forms() {
@@ -112,7 +100,12 @@ export function Phase2Forms() {
   };
   return (
     <>
-      <h2>Comprehensive automation form</h2>
+      <PageHeader
+        icon={FormInput}
+        title="Forms"
+        description="Practice form filling, validation, dynamic fields and complex controls."
+        onReset={() => location.reload()}
+      />
       <form
         className="panel form grid phase2-form"
         onSubmit={submit}
@@ -394,7 +387,12 @@ export function Phase2Interactions() {
   if (keyboard) return <KeyboardLab />;
   return (
     <>
-      <h2>Buttons, links & mouse interactions</h2>
+      <PageHeader
+        icon={MousePointerClick}
+        title="Buttons & Interactions"
+        description="Practice pointer events, state changes, links and drag interactions."
+        onReset={() => location.reload()}
+      />
       <div className="panel interaction-stage">
         <button id="normal-click" onClick={() => add("normal click")}>
           Normal click
@@ -566,7 +564,12 @@ function KeyboardLab() {
   };
   return (
     <>
-      <h2>Keyboard automation</h2>
+      <PageHeader
+        icon={Keyboard}
+        title="Keyboard Automation"
+        description="Inspect key events, shortcuts, focus and accessible keyboard widgets."
+        onReset={() => location.reload()}
+      />
       <div className="panel" onKeyDown={key}>
         <label>
           Keyboard capture
@@ -637,7 +640,12 @@ export function Phase2Dialogs() {
   }, []);
   return (
     <>
-      <h2>Alerts, modals, popups & notifications</h2>
+      <PageHeader
+        icon={PanelTopOpen}
+        title="Alerts & Modals"
+        description="Handle browser dialogs, nested modals, validation and notifications."
+        onReset={() => location.reload()}
+      />
       <div className="panel actions">
         <button
           onClick={() => {
@@ -797,7 +805,12 @@ export function Phase2Contexts() {
     );
   return (
     <>
-      <h2>Windows and tabs</h2>
+      <PageHeader
+        icon={AppWindow}
+        title="Windows & Tabs"
+        description="Practice context switching, child windows and cross-window messaging."
+        onReset={() => location.reload()}
+      />
       <div className="panel actions">
         <button
           onClick={() => window.open("/windows?context=tab-one", "_blank")}
@@ -853,7 +866,12 @@ function Frames() {
     '<h2 id="outer-text">Outer frame</h2><iframe title="Nested inner frame" srcdoc="<h3 id=inner-text>Unique nested inner frame</h3><button id=inner-button>Inner action</button>"></iframe>';
   return (
     <>
-      <h2>Iframe contexts</h2>
+      <PageHeader
+        icon={AppWindow}
+        title="Iframe Contexts"
+        description="Switch between basic, nested, form and dynamic frame contexts."
+        onReset={() => location.reload()}
+      />
       <div className="frame-grid">
         <iframe
           title="Basic frame"

@@ -2,6 +2,12 @@
 
 A locally runnable, deterministic full-stack practice application for Playwright, Cypress, Selenium, WebdriverIO, Robot Framework, and other browser automation tools.
 
+## Professional interface
+
+The application uses a tokenized developer-tool design system with intentional light, dark, and system themes. The authenticated shell includes grouped navigation, breadcrumbs, Ctrl/Cmd+K search, environment health details, notifications, profile/settings, user roles, and a responsive collapsed/mobile sidebar. Practice pages share reusable PageHeader and tabbed TestInfoPanel components so the target application remains visually distinct from testing guidance.
+
+Theme preference persists locally. The UI respects reduced-motion preferences and adapts from 1440px desktop layouts through 375px mobile screens. See [UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md).
+
 ## Quick start
 
 Requires Node 22.5+ (Node 24 LTS recommended).

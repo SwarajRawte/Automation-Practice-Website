@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
+import { TestInfoPanel } from "./components/testing/TestInfoPanel";
+import { PageHeader } from "./components/layout/PageHeader";
+import { Braces, Database, FileUp, Table2, TimerReset } from "lucide-react";
 const api = async (url: string, init?: RequestInit) => {
   const token = localStorage.getItem("token"),
     response = await fetch(url, {
@@ -26,26 +29,7 @@ function Info({
   endpoints: string;
 }) {
   return (
-    <details className="info" open>
-      <summary>Test Information</summary>
-      <dl>
-        <dt>Page</dt>
-        <dd>{name}</dd>
-        <dt>URL</dt>
-        <dd>{location.pathname}</dd>
-        <dt>Concepts</dt>
-        <dd>{concepts}</dd>
-        <dt>Recommended locators</dt>
-        <dd>table roles, column names, row IDs, labels, data-testid</dd>
-        <dt>Expected behavior</dt>
-        <dd>State changes are deterministic and visibly reported.</dd>
-        <dt>Suggested assertions</dt>
-        <dd>Exact rows, counts, status, history, progress, and reset state</dd>
-        <dt>Relevant APIs</dt>
-        <dd>{endpoints}</dd>
-      </dl>
-      <button onClick={() => location.reload()}>Reset module</button>
-    </details>
+    <TestInfoPanel name={name} concepts={concepts} endpoints={endpoints} />
   );
 }
 type Row = {
@@ -129,7 +113,12 @@ export function Phase3Tables() {
   if (virtual)
     return (
       <>
-        <h2>Virtual and infinite table</h2>
+        <PageHeader
+          icon={Table2}
+          title="Virtual Table"
+          description="Practice virtual viewports, incremental loading and deterministic scrolling."
+          onReset={() => location.reload()}
+        />
         <p>
           Rendering 100 deterministic records in a fixed-height scroll viewport.
         </p>
@@ -171,7 +160,12 @@ export function Phase3Tables() {
     );
   return (
     <>
-      <h2>{isStatic ? "Static table" : "Dynamic server-side data grid"}</h2>
+      <PageHeader
+        icon={Table2}
+        title={isStatic ? "Static Table" : "Dynamic Data Grid"}
+        description="Practice production-style sorting, filtering, selection and pagination."
+        onReset={() => location.reload()}
+      />
       <div className="panel table-controls">
         <label>
           Global search
@@ -511,7 +505,13 @@ export function Phase3Products() {
     setHistory((await api(`/api/products/${id}/history`)).data);
   return (
     <>
-      <h2>Persistent product CRUD</h2>
+      <PageHeader
+        icon={Database}
+        title="Product CRUD"
+        description="Practice persistent product workflows, conflicts, history and undo."
+        difficulty="Advanced"
+        onReset={() => location.reload()}
+      />
       <div className="panel product-toolbar">
         <label>
           Search
@@ -786,7 +786,12 @@ export function Phase3Files() {
   if (downloadPage)
     return (
       <>
-        <h2>Deterministic downloads</h2>
+        <PageHeader
+          icon={FileUp}
+          title="File Downloads"
+          description="Validate deterministic files, invoices, delays and download failures."
+          onReset={() => location.reload()}
+        />
         <div className="panel actions">
           <button onClick={() => download("text")}>Download text</button>
           <button onClick={() => download("csv")}>Download CSV</button>
@@ -807,7 +812,12 @@ export function Phase3Files() {
     );
   return (
     <>
-      <h2>File upload laboratory</h2>
+      <PageHeader
+        icon={FileUp}
+        title="File Uploads"
+        description="Practice validation, progress, cancellation, drag and drop and processing."
+        onReset={() => location.reload()}
+      />
       <div className="panel form">
         <label>
           Single or multiple files
@@ -934,7 +944,13 @@ export function Phase3Dynamic() {
   }, [query]);
   return (
     <>
-      <h2>Dynamic content & synchronization</h2>
+      <PageHeader
+        icon={TimerReset}
+        title="Dynamic Synchronization"
+        description="Practice explicit waits, polling, loaders, debounce and component remounts."
+        difficulty="Advanced"
+        onReset={() => location.reload()}
+      />
       <div className="dynamic-grid">
         <section className="panel">
           <h3>Appears/disappears</h3>
@@ -1050,7 +1066,13 @@ export function Phase3ShadowDom() {
   const [dynamic, setDynamic] = useState(false);
   return (
     <>
-      <h2>Shadow DOM & web components</h2>
+      <PageHeader
+        icon={Braces}
+        title="Shadow DOM"
+        description="Practice open, nested, dynamic and restricted web component roots."
+        difficulty="Advanced"
+        onReset={() => location.reload()}
+      />
       <div className="shadow-grid">
         {React.createElement("phase3-shadow" as any, {
           "data-testid": "open-shadow-host",

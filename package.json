@@ -19,6 +19,7 @@
     "cors": "latest",
     "express": "latest",
     "jsonwebtoken": "latest",
+    "lucide-react": "^1.31.0",
     "multer": "latest",
     "react": "latest",
     "react-dom": "latest",
