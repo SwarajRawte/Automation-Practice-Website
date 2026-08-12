@@ -12,8 +12,20 @@ CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY,user_id INTEGER,status 
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,action TEXT,detail TEXT,created_at TEXT);
 CREATE TABLE IF NOT EXISTS form_submissions(id INTEGER PRIMARY KEY AUTOINCREMENT,data TEXT,created_at TEXT);
 CREATE TABLE IF NOT EXISTS auth_tokens(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,type TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,expires_at TEXT NOT NULL,revoked INTEGER DEFAULT 0,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);`);
+db.exec(`CREATE TABLE IF NOT EXISTS product_history(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER NOT NULL,action TEXT NOT NULL,snapshot TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS uploaded_files(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,size INTEGER NOT NULL,mime_type TEXT NOT NULL,sha256 TEXT UNIQUE NOT NULL,data BLOB,created_at TEXT NOT NULL);`);
 try {
   db.exec("ALTER TABLE users ADD COLUMN session_version INTEGER DEFAULT 0");
+} catch {
+  // Existing databases already contain the migration.
+}
+try {
+  db.exec("ALTER TABLE products ADD COLUMN deleted_at TEXT");
+} catch {
+  // Existing databases already contain the migration.
+}
+try {
+  db.exec("ALTER TABLE products ADD COLUMN image_file_id INTEGER");
 } catch {
   // Existing databases already contain the migration.
 }
@@ -66,7 +78,7 @@ export function seed() {
 }
 export function reset() {
   db.exec(
-    "DELETE FROM auth_tokens; DELETE FROM audit; DELETE FROM form_submissions; DELETE FROM users;",
+    "DELETE FROM auth_tokens; DELETE FROM audit; DELETE FROM form_submissions; DELETE FROM product_history; DELETE FROM uploaded_files; DELETE FROM users;",
   );
   seed();
 }

@@ -11,17 +11,59 @@ import {
 } from "react-router-dom";
 import { io } from "socket.io-client";
 import {
+  Activity,
+  AlertTriangle,
+  AppWindow,
+  Boxes,
+  Braces,
+  CheckCircle2,
+  ChevronLeft,
+  Command,
+  Database,
+  FileUp,
+  FormInput,
+  Globe2,
+  Keyboard,
+  LayoutDashboard,
+  Menu,
+  MonitorSmartphone,
+  MousePointerClick,
+  Network,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  Settings,
+  ShieldCheck,
+  ShoppingCart,
+  Sun,
+  Table2,
+  User,
+  Wifi,
+  X,
+  Bell,
+} from "lucide-react";
+import { Brand } from "./components/layout/Brand";
+import {
   Phase2Forms,
   Phase2Interactions,
   Phase2Dialogs,
   Phase2Contexts,
 } from "./phase2";
+import {
+  Phase3Tables,
+  Phase3Products,
+  Phase3Files,
+  Phase3Dynamic,
+  Phase3ShadowDom,
+} from "./phase3";
+import { TestInfoPanel } from "./components/testing/TestInfoPanel";
 import "./styles.css";
 const modules = [
   ["Dashboard", "/dashboard"],
   ["Authentication", "/auth/login"],
   ["Forms", "/forms/basic"],
   ["Interactions", "/interactions/buttons"],
+  ["Mouse & Actions", "/interactions/actions"],
   ["Alerts & Modals", "/alerts"],
   ["Windows & Frames", "/windows"],
   ["Tables", "/tables/dynamic"],
@@ -41,6 +83,72 @@ const modules = [
   ["Admin", "/admin"],
   ["Test Control", "/test-control"],
 ];
+const navGroups = [
+  {
+    label: "Getting Started",
+    items: [
+      ["Dashboard", "/dashboard", LayoutDashboard],
+      ["Module Catalog", "/dashboard", Boxes],
+    ],
+  },
+  {
+    label: "Authentication",
+    items: [
+      ["Profile", "/profile", User],
+      ["Security & Sessions", "/profile", ShieldCheck],
+      ["Authorization", "/admin", Braces],
+    ],
+  },
+  {
+    label: "UI Automation",
+    items: [
+      ["Forms", "/forms/basic", FormInput],
+      ["Buttons & Interactions", "/interactions/buttons", Activity],
+      ["Mouse & Actions", "/interactions/actions", MousePointerClick],
+      ["Keyboard", "/interactions/keyboard", Keyboard],
+      ["Alerts & Modals", "/alerts", AlertTriangle],
+      ["Windows & Frames", "/windows", AppWindow],
+      ["Drag & Drop", "/interactions/buttons", Activity],
+      ["Tables", "/tables/dynamic", Table2],
+    ],
+  },
+  {
+    label: "Application Flows",
+    items: [
+      ["CRUD Products", "/crud/products", Database],
+      ["E-commerce", "/shop/products", ShoppingCart],
+      ["File Operations", "/files/upload", FileUp],
+    ],
+  },
+  {
+    label: "Advanced",
+    items: [
+      ["Dynamic Elements", "/dynamic-elements", Activity],
+      ["Shadow DOM", "/shadow-dom", Braces],
+      ["Browser Storage", "/storage", Database],
+      ["API & Network", "/api-playground", Network],
+      ["WebSockets", "/realtime", Wifi],
+      ["Time & Date", "/dynamic-elements?delay=1000", Activity],
+    ],
+  },
+  {
+    label: "Quality",
+    items: [
+      ["Accessibility", "/accessibility/good", ShieldCheck],
+      ["Responsive Testing", "/responsive", MonitorSmartphone],
+      ["Visual Testing", "/visual", AppWindow],
+      ["Internationalization", "/i18n", Globe2],
+      ["Error Handling", "/errors", AlertTriangle],
+    ],
+  },
+  {
+    label: "Administration",
+    items: [
+      ["Admin Dashboard", "/admin", ShieldCheck],
+      ["Test Control Center", "/test-control", Settings],
+    ],
+  },
+] as const;
 const api = async (url: string, init?: RequestInit) => {
   const token = localStorage.getItem("token");
   const r = await fetch(url, {
@@ -52,7 +160,21 @@ const api = async (url: string, init?: RequestInit) => {
       ...init?.headers,
     },
   });
-  const data = r.status === 204 ? null : await r.json();
+  const contentType = r.headers.get("content-type") || "";
+  let data: any = null;
+  if (r.status !== 204) {
+    if (contentType.includes("application/json")) {
+      data = await r.json();
+    } else {
+      // A missing API server or an incorrect proxy can return the SPA HTML here.
+      // Keep that infrastructure problem out of the form's user-facing errors.
+      await r.text();
+      data = {
+        error:
+          "The API returned an unexpected response. Make sure the application server is running and try again.",
+      };
+    }
+  }
   if (!r.ok) {
     if (r.status === 401 && !url.startsWith("/api/auth/")) {
       localStorage.removeItem("token");
@@ -62,8 +184,10 @@ const api = async (url: string, init?: RequestInit) => {
         `/auth/login?reason=session-expired&returnUrl=${encodeURIComponent(location.pathname)}`,
       );
     }
-    throw Error(data.error || `HTTP ${r.status}`);
+    throw Error(data?.error || `HTTP ${r.status}`);
   }
+  if (!contentType.includes("application/json") && r.status !== 204)
+    throw Error(data.error);
   return data;
 };
 const clearAuthentication = () => {
@@ -169,29 +293,10 @@ function Info({
   apiEndpoints?: string[];
 }) {
   return (
-    <details className="info" open>
-      <summary>Test Information</summary>
-      <dl>
-        <dt>Page</dt>
-        <dd>{name}</dd>
-        <dt>URL</dt>
-        <dd>{location.pathname}</dd>
-        <dt>Concepts</dt>
-        <dd>{concepts}</dd>
-        <dt>Recommended locators</dt>
-        <dd>role, accessible name, id, data-testid</dd>
-        <dt>Expected behavior</dt>
-        <dd>Actions produce a visible, deterministic result.</dd>
-        <dt>Suggested assertions</dt>
-        <dd>Visible status, API response, persisted state</dd>
-        <dt>Relevant APIs</dt>
-        <dd>{apiEndpoints.join(", ") || "None"}</dd>
-      </dl>
-      <button onClick={() => location.reload()}>Reset module</button>
-    </details>
+    <TestInfoPanel name={name} concepts={concepts} endpoints={apiEndpoints} />
   );
 }
-function Layout() {
+export function Layout() {
   const [open, setOpen] = useState(false);
   const user = JSON.parse(localStorage.getItem("user") || "null");
   const logout = async () => {
@@ -254,19 +359,19 @@ function Layout() {
         <main id="main">
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/dashboard" element={<NewDashboard />} />
             <Route path="/forms/*" element={<Phase2Forms />} />
             <Route path="/interactions/*" element={<Phase2Interactions />} />
             <Route path="/alerts" element={<Phase2Dialogs />} />
             <Route path="/modals" element={<Phase2Dialogs />} />
             <Route path="/windows" element={<Phase2Contexts />} />
             <Route path="/frames" element={<Phase2Contexts />} />
-            <Route path="/tables/*" element={<Tables />} />
-            <Route path="/crud/products" element={<Products />} />
+            <Route path="/tables/*" element={<Phase3Tables />} />
+            <Route path="/crud/products" element={<Phase3Products />} />
             <Route path="/shop/*" element={<Shop />} />
-            <Route path="/files/*" element={<Files />} />
-            <Route path="/dynamic-elements" element={<Dynamic />} />
-            <Route path="/shadow-dom" element={<Shadow />} />
+            <Route path="/files/*" element={<Phase3Files />} />
+            <Route path="/dynamic-elements" element={<Phase3Dynamic />} />
+            <Route path="/shadow-dom" element={<Phase3ShadowDom />} />
             <Route path="/storage" element={<Storage />} />
             <Route path="/api-playground" element={<ApiPlay />} />
             <Route path="/realtime" element={<Realtime />} />
@@ -298,7 +403,657 @@ function Layout() {
     </div>
   );
 }
-function Dashboard() {
+function AppLayout() {
+  const loc = useLocation(),
+    [open, setOpen] = useState(false),
+    [collapsed, setCollapsed] = useState(false),
+    [commandOpen, setCommandOpen] = useState(false),
+    [query, setQuery] = useState(""),
+    [theme, setTheme] = useState(localStorage.getItem("theme") || "system"),
+    user = JSON.parse(localStorage.getItem("user") || "null");
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+  useEffect(() => {
+    document.title = `E2E Test Lab — ${loc.pathname === "/dashboard" ? "Automation Practice" : loc.pathname.split("/").filter(Boolean).pop()?.replaceAll("-", " ") || "Dashboard"}`;
+  }, [loc.pathname]);
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandOpen(true);
+      }
+      if (event.key === "Escape") setCommandOpen(false);
+    };
+    addEventListener("keydown", key);
+    return () => removeEventListener("keydown", key);
+  }, []);
+  const logout = async () => {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          refreshToken: localStorage.getItem("refreshToken"),
+        }),
+      });
+    } finally {
+      clearAuthentication();
+      window.location.replace("/auth/login");
+    }
+  };
+  return (
+    <div className={`app ${collapsed ? "app--collapsed" : ""}`}>
+      <a className="skip" href="#main">
+        Skip to content
+      </a>
+      <aside className={`sidebar ${open ? "open" : ""}`}>
+        <div className="sidebar__brand">
+          <Brand compact={collapsed} />
+          <button
+            className="icon-btn sidebar__collapse"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => setCollapsed(!collapsed)}
+          >
+            {collapsed ? (
+              <PanelLeftOpen size={17} />
+            ) : (
+              <PanelLeftClose size={17} />
+            )}
+          </button>
+        </div>
+        <nav className="sidebar__nav" aria-label="Primary navigation">
+          {navGroups.map((group) => (
+            <section className="nav-group" key={group.label}>
+              <h2>{group.label}</h2>
+              {group.items.map(([name, path, Icon]) => (
+                <NavLink
+                  key={`${name}-${path}`}
+                  to={path}
+                  title={collapsed ? name : undefined}
+                  onClick={() => setOpen(false)}
+                >
+                  <Icon size={17} />
+                  <span>{name}</span>
+                </NavLink>
+              ))}
+            </section>
+          ))}
+        </nav>
+        <div className="sidebar__footer">
+          <span className="status-dot" />
+          <span>API connected</span>
+          <small>v1.0.0</small>
+        </div>
+      </aside>
+      <div className="shell">
+        <header className="topbar">
+          <button
+            className="icon-btn hamb"
+            aria-label="Toggle navigation"
+            onClick={() => setOpen(!open)}
+          >
+            <Menu size={20} />
+          </button>
+          <nav className="breadcrumbs" aria-label="Breadcrumb">
+            <NavLink to="/dashboard">Automation</NavLink>
+            <span>/</span>
+            <span>
+              {loc.pathname
+                .split("/")
+                .filter(Boolean)
+                .map((word) => word.replaceAll("-", " "))
+                .join(" / ") || "Dashboard"}
+            </span>
+          </nav>
+          <button
+            className="global-search"
+            onClick={() => setCommandOpen(true)}
+          >
+            <Search size={16} />
+            <span>Search modules, pages and APIs</span>
+            <kbd>Ctrl K</kbd>
+          </button>
+          <details className="environment-menu">
+            <summary data-testid="environment">
+              <span className="status-dot" />
+              LOCAL
+            </summary>
+            <div className="popover">
+              <strong>Lab environment</strong>
+              <dl>
+                <dt>Environment</dt>
+                <dd>Local</dd>
+                <dt>API</dt>
+                <dd className="state-success">Connected</dd>
+                <dt>Database</dt>
+                <dd>SQLite</dd>
+                <dt>Test mode</dt>
+                <dd>Enabled</dd>
+                <dt>Deterministic</dt>
+                <dd>Enabled</dd>
+              </dl>
+            </div>
+          </details>
+          <button
+            className="icon-btn notification-btn"
+            aria-label="Notifications"
+            title="Notifications"
+          >
+            <Bell size={18} />
+            <span className="notification-dot" />
+          </button>
+          <label className="theme-select" aria-label="Theme">
+            <Sun size={16} />
+            <select
+              value={theme}
+              onChange={(event) => setTheme(event.target.value)}
+            >
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+              <option value="system">System</option>
+            </select>
+          </label>
+          <details className="user-menu" data-testid="user-menu">
+            <summary>
+              <span className="avatar">
+                {user?.name
+                  ?.split(" ")
+                  .map((part: string) => part[0])
+                  .slice(0, 2)
+                  .join("")}
+              </span>
+              <span className="user-menu__copy">
+                <strong>{user?.name}</strong>
+                <small>{user?.role}</small>
+              </span>
+            </summary>
+            <div className="popover user-popover">
+              <div>
+                <strong>{user?.name}</strong>
+                <small>{user?.email}</small>
+                <span className="badge">{user?.role}</span>
+              </div>
+              <NavLink to="/profile">
+                <User size={15} />
+                Profile
+              </NavLink>
+              <NavLink to="/profile">
+                <Settings size={15} />
+                Preferences
+              </NavLink>
+              <button data-testid="logout-button" onClick={logout}>
+                <ChevronLeft size={15} />
+                Logout
+              </button>
+            </div>
+          </details>
+        </header>
+        <main id="main">
+          <Routes>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<NewDashboard />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="/forms/*" element={<Phase2Forms />} />
+            <Route path="/interactions/*" element={<Phase2Interactions />} />
+            <Route path="/alerts" element={<Phase2Dialogs />} />
+            <Route path="/modals" element={<Phase2Dialogs />} />
+            <Route path="/windows" element={<Phase2Contexts />} />
+            <Route path="/frames" element={<Phase2Contexts />} />
+            <Route path="/tables/*" element={<Phase3Tables />} />
+            <Route path="/crud/products" element={<Phase3Products />} />
+            <Route path="/shop/*" element={<Shop />} />
+            <Route path="/files/*" element={<Phase3Files />} />
+            <Route path="/dynamic-elements" element={<Phase3Dynamic />} />
+            <Route path="/shadow-dom" element={<Phase3ShadowDom />} />
+            <Route path="/storage" element={<Storage />} />
+            <Route path="/api-playground" element={<ApiPlay />} />
+            <Route path="/realtime" element={<Realtime />} />
+            <Route path="/accessibility/*" element={<Accessibility />} />
+            <Route path="/visual" element={<Visual />} />
+            <Route path="/responsive" element={<Responsive />} />
+            <Route path="/i18n" element={<I18n />} />
+            <Route path="/errors" element={<Errors />} />
+            <Route
+              path="/admin"
+              element={
+                <Protected role="ADMIN">
+                  <Admin />
+                </Protected>
+              }
+            />
+            <Route
+              path="/test-control"
+              element={
+                <Protected role="ADMIN">
+                  <TestControl />
+                </Protected>
+              }
+            />
+            <Route path="*" element={<Errors />} />
+          </Routes>
+        </main>
+      </div>
+      {commandOpen && (
+        <div
+          className="command-backdrop"
+          onMouseDown={() => setCommandOpen(false)}
+        >
+          <section
+            className="command-palette"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Global search"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="command-input">
+              <Search size={18} />
+              <input
+                autoFocus
+                aria-label="Search modules, pages, scenarios and APIs"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search modules, pages, scenarios and APIs…"
+              />
+              <button
+                className="icon-btn"
+                aria-label="Close search"
+                onClick={() => setCommandOpen(false)}
+              >
+                <X size={17} />
+              </button>
+            </div>
+            <div className="command-results">
+              {modules
+                .filter(([name, path]) =>
+                  `${name} ${path}`.toLowerCase().includes(query.toLowerCase()),
+                )
+                .map(([name, path]) => (
+                  <NavLink
+                    key={`${name}-${path}`}
+                    to={path}
+                    onClick={() => setCommandOpen(false)}
+                  >
+                    <Command size={16} />
+                    <span>
+                      <strong>{name}</strong>
+                      <small>{path}</small>
+                    </span>
+                    <kbd>↵</kbd>
+                  </NavLink>
+                ))}
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+const moduleMeta = [
+  {
+    name: "Authentication",
+    path: "/auth/login",
+    icon: ShieldCheck,
+    description: "Login, sessions, protected routes and role authorization.",
+    difficulty: "Intermediate",
+    scenarios: 12,
+    tags: ["Auth", "Security"],
+  },
+  {
+    name: "Forms",
+    path: "/forms/basic",
+    icon: FormInput,
+    description: "Validation, dynamic fields and complex form controls.",
+    difficulty: "Intermediate",
+    scenarios: 18,
+    tags: ["Forms", "Validation"],
+  },
+  {
+    name: "Interactions",
+    path: "/interactions/buttons",
+    icon: Activity,
+    description: "Clicks, hover, keyboard, drag and pointer events.",
+    difficulty: "Beginner",
+    scenarios: 16,
+    tags: ["Mouse", "Keyboard"],
+  },
+  {
+    name: "Tables",
+    path: "/tables/dynamic",
+    icon: Table2,
+    description: "Server grids, sorting, filtering and virtual scrolling.",
+    difficulty: "Advanced",
+    scenarios: 14,
+    tags: ["Data Grid", "API"],
+  },
+  {
+    name: "Product CRUD",
+    path: "/crud/products",
+    icon: Database,
+    description: "Persistent create, edit, conflict, history and undo flows.",
+    difficulty: "Advanced",
+    scenarios: 13,
+    tags: ["CRUD", "Database"],
+  },
+  {
+    name: "File Operations",
+    path: "/files/upload",
+    icon: FileUp,
+    description: "Uploads, validation, progress and deterministic downloads.",
+    difficulty: "Intermediate",
+    scenarios: 15,
+    tags: ["Files", "Network"],
+  },
+  {
+    name: "Dynamic Elements",
+    path: "/dynamic-elements",
+    icon: Activity,
+    description: "Wait strategies, polling, remounts and synchronization.",
+    difficulty: "Advanced",
+    scenarios: 12,
+    tags: ["Waits", "Async"],
+  },
+  {
+    name: "Shadow DOM",
+    path: "/shadow-dom",
+    icon: Braces,
+    description: "Open, nested, dynamic and closed web components.",
+    difficulty: "Advanced",
+    scenarios: 8,
+    tags: ["DOM", "Components"],
+  },
+  {
+    name: "API & Network",
+    path: "/api-playground",
+    icon: Network,
+    description: "Status codes, delays, failures and response assertions.",
+    difficulty: "Advanced",
+    scenarios: 14,
+    tags: ["REST", "Network"],
+  },
+  {
+    name: "Accessibility",
+    path: "/accessibility/good",
+    icon: ShieldCheck,
+    description: "Semantic, keyboard and intentionally problematic examples.",
+    difficulty: "Intermediate",
+    scenarios: 10,
+    tags: ["A11y", "WCAG"],
+  },
+];
+function NewDashboard() {
+  const user = JSON.parse(localStorage.getItem("user") || "null"),
+    [search, setSearch] = useState(""),
+    [difficulty, setDifficulty] = useState("All"),
+    [view, setView] = useState<"grid" | "list">("grid");
+  const shown = moduleMeta.filter(
+    (module) =>
+      (difficulty === "All" || module.difficulty === difficulty) &&
+      `${module.name} ${module.description} ${module.tags.join(" ")}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+  );
+  return (
+    <div className="dashboard" data-testid="dashboard-page">
+      <section className="dashboard-hero">
+        <div>
+          <span className="eyebrow">AUTOMATION PRACTICE</span>
+          <h1>Welcome back, {user?.name?.split(" ")[0]}</h1>
+          <p>
+            Practice real-world end-to-end web automation scenarios in a
+            deterministic lab.
+          </p>
+        </div>
+        <span className="role-pill">
+          <ShieldCheck size={15} />
+          {user?.role}
+        </span>
+      </section>
+      <section className="metrics" aria-label="Practice statistics">
+        {[
+          [102, "Practice Modules", Boxes],
+          [24, "Completed", CheckCircle2],
+          [8, "In Progress", Activity],
+          [31, "Advanced", Braces],
+        ].map(([value, label, Icon]: any) => (
+          <article className="metric-card" key={label}>
+            <span className="metric-card__icon">
+              <Icon size={19} />
+            </span>
+            <div>
+              <strong>{value}</strong>
+              <span>{label}</span>
+            </div>
+          </article>
+        ))}
+      </section>
+      <section className="catalog">
+        <header className="catalog__header">
+          <div>
+            <h2>Automation Practice</h2>
+            <p>Choose a scenario and start testing.</p>
+          </div>
+          <div className="view-toggle" aria-label="View style">
+            <button
+              aria-pressed={view === "grid"}
+              onClick={() => setView("grid")}
+            >
+              <Boxes size={16} />
+            </button>
+            <button
+              aria-pressed={view === "list"}
+              onClick={() => setView("list")}
+            >
+              <Menu size={16} />
+            </button>
+          </div>
+        </header>
+        <div className="catalog__filters">
+          <label className="search-field">
+            <Search size={16} />
+            <input
+              aria-label="Search modules"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search modules and scenarios"
+            />
+          </label>
+          <label>
+            <span className="sr-only">Difficulty</span>
+            <select
+              value={difficulty}
+              onChange={(event) => setDifficulty(event.target.value)}
+            >
+              <option>All</option>
+              <option>Beginner</option>
+              <option>Intermediate</option>
+              <option>Advanced</option>
+            </select>
+          </label>
+          <select aria-label="Category filter">
+            <option>All categories</option>
+            <option>UI Automation</option>
+            <option>Application Flows</option>
+            <option>Advanced</option>
+          </select>
+          <select aria-label="Status filter">
+            <option>All statuses</option>
+            <option>Not started</option>
+            <option>In progress</option>
+            <option>Completed</option>
+          </select>
+          <select aria-label="Sort modules">
+            <option>Recommended</option>
+            <option>Name A–Z</option>
+            <option>Difficulty</option>
+          </select>
+        </div>
+        {shown.length ? (
+          <div className={`module-grid module-grid--${view}`}>
+            {shown.map((module, index) => (
+              <article className="module-card" key={module.name}>
+                <div className="module-card__top">
+                  <span className="module-card__icon">
+                    <module.icon size={20} />
+                  </span>
+                  <span
+                    className={`badge badge--${module.difficulty.toLowerCase()}`}
+                  >
+                    {module.difficulty}
+                  </span>
+                </div>
+                <h3>{module.name}</h3>
+                <p>{module.description}</p>
+                <div className="tag-row">
+                  {module.tags.map((tag) => (
+                    <span key={tag}>{tag}</span>
+                  ))}
+                </div>
+                <div className="module-card__progress">
+                  <span>Progress</span>
+                  <span>{index % 3 === 0 ? "65" : "0"}%</span>
+                  <progress max="100" value={index % 3 === 0 ? 65 : 0} />
+                </div>
+                <footer>
+                  <span>{module.scenarios} scenarios</span>
+                  <NavLink
+                    className="btn btn--primary btn--sm"
+                    to={module.path}
+                  >
+                    Open Lab
+                  </NavLink>
+                </footer>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <Search size={28} />
+            <h3>No modules found</h3>
+            <p>No testing modules match your filters.</p>
+            <button
+              className="btn btn--outline"
+              onClick={() => {
+                setSearch("");
+                setDifficulty("All");
+              }}
+            >
+              Clear filters
+            </button>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+function Profile() {
+  const user = JSON.parse(localStorage.getItem("user") || "null"),
+    [tab, setTab] = useState("Profile"),
+    [saved, setSaved] = useState("");
+  return (
+    <div className="settings-page">
+      <header className="settings-header">
+        <span className="avatar avatar--lg">
+          {user?.name
+            ?.split(" ")
+            .map((x: string) => x[0])
+            .slice(0, 2)
+            .join("")}
+        </span>
+        <div>
+          <h1>{user?.name}</h1>
+          <p>
+            {user?.email} · {user?.role}
+          </p>
+        </div>
+      </header>
+      <nav className="settings-tabs" aria-label="Profile sections">
+        {["Profile", "Security", "Preferences", "Notifications"].map(
+          (value) => (
+            <button
+              aria-current={tab === value ? "page" : undefined}
+              onClick={() => setTab(value)}
+              key={value}
+            >
+              {value}
+            </button>
+          ),
+        )}
+      </nav>
+      <section className="settings-panel">
+        <h2>{tab}</h2>
+        <p>
+          Manage your {tab.toLowerCase()} settings for this local test
+          environment.
+        </p>
+        {tab === "Profile" && (
+          <div className="form grid">
+            <label>
+              Display name
+              <input defaultValue={user?.name} />
+            </label>
+            <label>
+              Email address
+              <input type="email" defaultValue={user?.email} />
+            </label>
+            <label>
+              Role
+              <input value={user?.role} readOnly />
+            </label>
+          </div>
+        )}
+        {tab === "Security" && (
+          <div className="form">
+            <label>
+              Current password
+              <input type="password" />
+            </label>
+            <label>
+              New password
+              <input type="password" />
+            </label>
+          </div>
+        )}
+        {tab === "Preferences" && (
+          <div className="form grid">
+            <label>
+              Language
+              <select>
+                <option>English</option>
+                <option>French</option>
+              </select>
+            </label>
+            <label>
+              Timezone
+              <select>
+                <option>America/Toronto</option>
+                <option>UTC</option>
+              </select>
+            </label>
+          </div>
+        )}
+        {tab === "Notifications" && (
+          <label className="check">
+            <input type="checkbox" defaultChecked />
+            Enable lab notifications
+          </label>
+        )}
+        <div className="actions">
+          <button
+            className="btn btn--primary"
+            onClick={() => setSaved("Settings saved successfully.")}
+          >
+            Save changes
+          </button>
+          <button className="btn btn--outline">Cancel</button>
+        </div>
+        <output role="status">{saved}</output>
+      </section>
+    </div>
+  );
+}
+export function Dashboard() {
   const user = JSON.parse(localStorage.getItem("user") || "null");
   return (
     <div data-testid="dashboard-page">
@@ -406,6 +1161,15 @@ function Auth() {
     });
   const update = (key: string, value: string | boolean) =>
     set({ ...form, [key]: value });
+  const demoAccounts = [
+    { role: "Administrator", email: "admin@testlab.local", password: "Admin123!" },
+    { role: "Standard user", email: "user@testlab.local", password: "User123!" },
+    { role: "Read-only viewer", email: "viewer@testlab.local", password: "Viewer123!" },
+  ];
+  const fillDemoAccount = (email: string, password: string) => {
+    set({ ...form, email, password });
+    setMsg("");
+  };
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg("");
@@ -484,13 +1248,43 @@ function Auth() {
       className="login-shell"
       data-testid={mode === "login" ? "login-page" : `auth-${mode}-page`}
     >
-      <section className="login-card">
-        <div className="login-brand" aria-label="E2E Test Lab">
-          <span className="login-logo">E2E</span>
-          <div>
-            <h1>E2E Test Lab</h1>
-            <p>Automation practice environment</p>
+      {mode === "login" && (
+        <section className="login-intro">
+          <Brand />
+          <div className="login-intro__copy">
+            <span className="eyebrow">BUILT FOR QA ENGINEERS</span>
+            <h1>Practice modern web automation with confidence.</h1>
+            <p>
+              A deterministic environment for mastering real-world browser
+              workflows, APIs, synchronization and accessibility.
+            </p>
           </div>
+          <ul>
+            <li>
+              <CheckCircle2 size={17} />
+              Production-style testing scenarios
+            </li>
+            <li>
+              <CheckCircle2 size={17} />
+              Predictable data and reset controls
+            </li>
+            <li>
+              <CheckCircle2 size={17} />
+              Designed for every automation framework
+            </li>
+          </ul>
+          <div className="environment-card">
+            <span className="status-dot" />
+            <div>
+              <strong>Test Environment</strong>
+              <span>Environment: Local · Mode: Test</span>
+            </div>
+          </div>
+        </section>
+      )}
+      <section className="login-card">
+        <div className="login-brand">
+          <Brand />
         </div>
         {new URLSearchParams(loc.search).get("reason") ===
           "session-expired" && (
@@ -498,7 +1292,13 @@ function Auth() {
             Your session has expired. Please log in again.
           </div>
         )}
-        <h2>{title[mode] || mode}</h2>
+        <span className="eyebrow">SECURE ACCESS</span>
+        <h2>{mode === "login" ? "Welcome back" : title[mode] || mode}</h2>
+        {mode === "login" && (
+          <p className="login-card__subtitle">
+            Sign in to continue to your automation workspace.
+          </p>
+        )}
         {mode !== "login" && (
           <div className="actions">
             <NavLink className="button" to="/auth/login">
@@ -596,7 +1396,13 @@ function Auth() {
           {["login", "register", "reset-password", "change-password"].includes(
             mode,
           ) && (
-            <button type="button" className="secondary" data-testid="toggle-password" aria-pressed={show} onClick={() => setShow(!show)}>
+            <button
+              type="button"
+              className="secondary"
+              data-testid="toggle-password"
+              aria-pressed={show}
+              onClick={() => setShow(!show)}
+            >
               {show ? "Hide password" : "Show password"}
             </button>
           )}
@@ -624,6 +1430,31 @@ function Auth() {
             {msg}
           </output>
         </form>
+        {mode === "login" && (
+          <section className="demo-accounts" aria-labelledby="demo-logins-title">
+            <div className="demo-accounts__heading">
+              <strong id="demo-logins-title">Demo logins</strong>
+              <span>Click an account to fill the form</span>
+            </div>
+            <div className="demo-accounts__list">
+              {demoAccounts.map((account) => (
+                <button
+                  key={account.email}
+                  type="button"
+                  className="demo-account"
+                  data-testid={`demo-${account.email.split("@")[0]}`}
+                  onClick={() => fillDemoAccount(account.email, account.password)}
+                >
+                  <span>
+                    <strong>{account.role}</strong>
+                    <small>{account.email}</small>
+                  </span>
+                  <code>{account.password}</code>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         {mode === "login" && (
           <div className="login-links">
             <NavLink
@@ -883,7 +1714,7 @@ export function Windows() {
     </>
   );
 }
-function Tables() {
+export function Tables() {
   const [rows, setRows] = useState<any[]>([]),
     [sort, setSort] = useState<"id" | "name">("id"),
     [q, setQ] = useState("");
@@ -1031,7 +1862,7 @@ function Shop() {
     </>
   );
 }
-function Files() {
+export function Files() {
   const [msg, setMsg] = useState("");
   const send = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1063,7 +1894,7 @@ function Files() {
     </>
   );
 }
-function Dynamic() {
+export function Dynamic() {
   const p = new URLSearchParams(location.search),
     delay = Number(p.get("delay") || 1500),
     [state, setState] = useState("Loading…");
@@ -1110,7 +1941,7 @@ class LabElement extends HTMLElement {
 }
 customElements.get("lab-element") ||
   customElements.define("lab-element", LabElement);
-function Shadow() {
+export function Shadow() {
   return (
     <>
       <h2>Shadow DOM & web components</h2>
@@ -1513,7 +2344,7 @@ function ApplicationRoutes() {
         path="/*"
         element={
           <AuthGate>
-            <Layout />
+            <AppLayout />
           </AuthGate>
         }
       />

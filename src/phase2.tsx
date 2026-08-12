@@ -1,5 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { TestInfoPanel } from "./components/testing/TestInfoPanel";
+import { PageHeader } from "./components/layout/PageHeader";
+import {
+  AppWindow,
+  FormInput,
+  Keyboard,
+  MousePointerClick,
+  PanelTopOpen,
+} from "lucide-react";
 const jsonApi = async (url: string, init?: RequestInit) => {
   const r = await fetch(url, {
       ...init,
@@ -23,28 +32,7 @@ function TestInfo({
   endpoints?: string;
 }) {
   return (
-    <details className="info" open>
-      <summary>Test Information</summary>
-      <dl>
-        <dt>Page</dt>
-        <dd>{name}</dd>
-        <dt>URL</dt>
-        <dd>{location.pathname}</dd>
-        <dt>Concepts</dt>
-        <dd>{concepts}</dd>
-        <dt>Recommended locators</dt>
-        <dd>Accessible role/name, id, name, data-testid</dd>
-        <dt>Expected behavior</dt>
-        <dd>Every action produces deterministic visible output.</dd>
-        <dt>Suggested assertions</dt>
-        <dd>
-          Status text, event log, validation summary, persisted confirmation
-        </dd>
-        <dt>Relevant APIs</dt>
-        <dd>{endpoints}</dd>
-      </dl>
-      <button onClick={() => location.reload()}>Reset module</button>
-    </details>
+    <TestInfoPanel name={name} concepts={concepts} endpoints={endpoints} />
   );
 }
 export function Phase2Forms() {
@@ -112,7 +100,12 @@ export function Phase2Forms() {
   };
   return (
     <>
-      <h2>Comprehensive automation form</h2>
+      <PageHeader
+        icon={FormInput}
+        title="Forms"
+        description="Practice form filling, validation, dynamic fields and complex controls."
+        onReset={() => location.reload()}
+      />
       <form
         className="panel form grid phase2-form"
         onSubmit={submit}
@@ -380,6 +373,7 @@ export function Phase2Forms() {
 export function Phase2Interactions() {
   const loc = useLocation(),
     keyboard = loc.pathname.endsWith("/keyboard"),
+    actions = loc.pathname.endsWith("/actions"),
     [log, setLog] = useState<string[]>([]),
     [enabled, setEnabled] = useState(false),
     [delayed, setDelayed] = useState(false),
@@ -392,9 +386,15 @@ export function Phase2Interactions() {
     return () => clearTimeout(timer);
   }, []);
   if (keyboard) return <KeyboardLab />;
+  if (actions) return <ActionsLab />;
   return (
     <>
-      <h2>Buttons, links & mouse interactions</h2>
+      <PageHeader
+        icon={MousePointerClick}
+        title="Buttons & Interactions"
+        description="Practice pointer events, state changes, links and drag interactions."
+        onReset={() => location.reload()}
+      />
       <div className="panel interaction-stage">
         <button id="normal-click" onClick={() => add("normal click")}>
           Normal click
@@ -539,6 +539,207 @@ export function Phase2Interactions() {
     </>
   );
 }
+function ActionsLab() {
+  const [events, setEvents] = useState<string[]>([]),
+    [hovered, setHovered] = useState(false),
+    [held, setHeld] = useState(false),
+    [dragging, setDragging] = useState(false),
+    [dropped, setDropped] = useState(false),
+    [selected, setSelected] = useState<string[]>([]),
+    holdTimer = useRef<number | undefined>(undefined);
+  const record = (event: string) =>
+    setEvents((current) => [event, ...current].slice(0, 12));
+  const toggleSelection = (name: string, additive: boolean) => {
+    setSelected((current) =>
+      additive
+        ? current.includes(name)
+          ? current.filter((item) => item !== name)
+          : [...current, name]
+        : [name],
+    );
+    record(`${additive ? "Modifier" : "Normal"} click: ${name}`);
+  };
+  return (
+    <>
+      <PageHeader
+        icon={MousePointerClick}
+        title="Mouse & Selenium Actions"
+        description="Practice the complete Java Actions workflow with deterministic pointer and keyboard targets."
+        onReset={() => location.reload()}
+      />
+      <div className="actions-lab">
+        <section className="panel action-card">
+          <h3>Move and hover</h3>
+          <p>Use <code>moveToElement</code> to reveal the hidden menu.</p>
+          <div
+            className="hover-target"
+            data-testid="actions-hover-target"
+            onMouseEnter={() => {
+              setHovered(true);
+              record("Hover entered");
+            }}
+            onMouseLeave={() => setHovered(false)}
+          >
+            Hover over me
+            {hovered && (
+              <button
+                data-testid="hover-menu-item"
+                onClick={() => record("Hidden hover action clicked")}
+              >
+                Hidden action
+              </button>
+            )}
+          </div>
+        </section>
+
+        <section className="panel action-card">
+          <h3>Click variations</h3>
+          <p>Practice click, double-click, and context-click.</p>
+          <div className="actions">
+            <button data-testid="actions-click" onClick={() => record("Single click")}>Single click</button>
+            <button data-testid="actions-double-click" onDoubleClick={() => record("Double click")}>Double-click</button>
+            <button
+              data-testid="actions-context-click"
+              onContextMenu={(event) => {
+                event.preventDefault();
+                record("Context click");
+              }}
+            >
+              Right-click
+            </button>
+          </div>
+        </section>
+
+        <section className="panel action-card">
+          <h3>Click and hold</h3>
+          <p>Hold for 800 ms, then release.</p>
+          <button
+            className={held ? "hold-target complete" : "hold-target"}
+            data-testid="actions-hold-target"
+            onMouseDown={() => {
+              record("Hold started");
+              holdTimer.current = window.setTimeout(() => {
+                setHeld(true);
+                record("Hold completed");
+              }, 800);
+            }}
+            onMouseUp={() => {
+              clearTimeout(holdTimer.current);
+              record("Mouse released");
+            }}
+            onMouseLeave={() => clearTimeout(holdTimer.current)}
+          >
+            {held ? "Hold successful" : "Click and hold"}
+          </button>
+        </section>
+
+        <section className="panel action-card">
+          <h3>Drag and drop</h3>
+          <p>Use <code>dragAndDrop</code> or click-and-hold, move, release.</p>
+          <div className="action-drag-row">
+            <div
+              className="action-drag-source"
+              data-testid="actions-drag-source"
+              draggable
+              onDragStart={(event) => {
+                event.dataTransfer.setData("text/plain", "Selenium item");
+                setDragging(true);
+                record("Drag started");
+              }}
+              onMouseDown={() => setDragging(true)}
+            >
+              {dropped ? "Moved" : "Drag item"}
+            </div>
+            <div
+              className={dropped ? "action-drop-target complete" : "action-drop-target"}
+              data-testid="actions-drop-target"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDropped(true);
+                setDragging(false);
+                record(`Dropped: ${event.dataTransfer.getData("text/plain")}`);
+              }}
+              onMouseUp={() => {
+                if (dragging) {
+                  setDropped(true);
+                  setDragging(false);
+                  record("Dropped with click-and-hold");
+                }
+              }}
+            >
+              {dropped ? "Drop successful" : "Drop here"}
+            </div>
+          </div>
+        </section>
+
+        <section className="panel action-card">
+          <h3>Modifier keys</h3>
+          <p>Hold Control/Command while clicking to select multiple items.</p>
+          <div className="modifier-list" data-testid="modifier-list">
+            {["Alpha", "Bravo", "Charlie"].map((item) => (
+              <button
+                key={item}
+                className={selected.includes(item) ? "selected" : ""}
+                aria-pressed={selected.includes(item)}
+                data-testid={`modifier-${item.toLowerCase()}`}
+                onClick={(event) => toggleSelection(item, event.ctrlKey || event.metaKey)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel action-card">
+          <h3>Offsets and scrolling</h3>
+          <p>Move by offset inside the pad or scroll to the final target.</p>
+          <div
+            className="offset-pad"
+            data-testid="actions-offset-pad"
+            onClick={(event) =>
+              record(`Offset click: ${event.nativeEvent.offsetX}, ${event.nativeEvent.offsetY}`)
+            }
+          >
+            Click at an offset
+          </div>
+          <button
+            data-testid="actions-scroll-target"
+            onClick={() => record("Scrolled target clicked")}
+          >
+            Final scroll target
+          </button>
+        </section>
+      </div>
+
+      <section className="panel actions-reference">
+        <h3>Java Actions class reference</h3>
+        <pre data-testid="java-actions-example">{`Actions actions = new Actions(driver);
+
+actions.moveToElement(hoverTarget).perform();
+actions.click(clickTarget).perform();
+actions.doubleClick(doubleClickTarget).perform();
+actions.contextClick(rightClickTarget).perform();
+actions.clickAndHold(holdTarget).pause(Duration.ofMillis(900)).release().perform();
+actions.dragAndDrop(source, target).perform();
+actions.clickAndHold(source).moveToElement(target).release().perform();
+actions.moveToElement(offsetPad, 40, 20).click().perform();
+actions.keyDown(Keys.CONTROL).click(alpha).click(bravo).keyUp(Keys.CONTROL).perform();
+actions.scrollToElement(scrollTarget).click().perform();`}</pre>
+      </section>
+      <section className="panel">
+        <h3>Action event log</h3>
+        <ol data-testid="actions-event-log">
+          {events.length ? events.map((event, index) => <li key={`${event}-${index}`}>{event}</li>) : <li>No actions recorded</li>}
+        </ol>
+      </section>
+      <TestInfo
+        name="Selenium Java Actions class"
+        concepts="moveToElement, click, doubleClick, contextClick, clickAndHold, release, dragAndDrop, moveByOffset, keyDown, keyUp, pause, scrollToElement, perform"
+      />
+    </>
+  );
+}
 function KeyboardLab() {
   const [last, setLast] = useState<any>(null),
     [items, setItems] = useState(["Alpha", "Bravo", "Charlie"]),
@@ -566,7 +767,12 @@ function KeyboardLab() {
   };
   return (
     <>
-      <h2>Keyboard automation</h2>
+      <PageHeader
+        icon={Keyboard}
+        title="Keyboard Automation"
+        description="Inspect key events, shortcuts, focus and accessible keyboard widgets."
+        onReset={() => location.reload()}
+      />
       <div className="panel" onKeyDown={key}>
         <label>
           Keyboard capture
@@ -637,7 +843,12 @@ export function Phase2Dialogs() {
   }, []);
   return (
     <>
-      <h2>Alerts, modals, popups & notifications</h2>
+      <PageHeader
+        icon={PanelTopOpen}
+        title="Alerts & Modals"
+        description="Handle browser dialogs, nested modals, validation and notifications."
+        onReset={() => location.reload()}
+      />
       <div className="panel actions">
         <button
           onClick={() => {
@@ -797,7 +1008,12 @@ export function Phase2Contexts() {
     );
   return (
     <>
-      <h2>Windows and tabs</h2>
+      <PageHeader
+        icon={AppWindow}
+        title="Windows & Tabs"
+        description="Practice context switching, child windows and cross-window messaging."
+        onReset={() => location.reload()}
+      />
       <div className="panel actions">
         <button
           onClick={() => window.open("/windows?context=tab-one", "_blank")}
@@ -853,7 +1069,12 @@ function Frames() {
     '<h2 id="outer-text">Outer frame</h2><iframe title="Nested inner frame" srcdoc="<h3 id=inner-text>Unique nested inner frame</h3><button id=inner-button>Inner action</button>"></iframe>';
   return (
     <>
-      <h2>Iframe contexts</h2>
+      <PageHeader
+        icon={AppWindow}
+        title="Iframe Contexts"
+        description="Switch between basic, nested, form and dynamic frame contexts."
+        onReset={() => location.reload()}
+      />
       <div className="frame-grid">
         <iframe
           title="Basic frame"

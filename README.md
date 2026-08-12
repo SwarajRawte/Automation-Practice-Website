@@ -2,6 +2,12 @@
 
 A locally runnable, deterministic full-stack practice application for Playwright, Cypress, Selenium, WebdriverIO, Robot Framework, and other browser automation tools.
 
+## Professional interface
+
+The application uses a tokenized developer-tool design system with intentional light, dark, and system themes. The authenticated shell includes grouped navigation, breadcrumbs, Ctrl/Cmd+K search, environment health details, notifications, profile/settings, user roles, and a responsive collapsed/mobile sidebar. Practice pages share reusable PageHeader and tabbed TestInfoPanel components so the target application remains visually distinct from testing guidance.
+
+Theme preference persists locally. The UI respects reduced-motion preferences and adapts from 1440px desktop layouts through 375px mobile screens. See [UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md).
+
 ## Quick start
 
 Requires Node 22.5+ (Node 24 LTS recommended).
@@ -71,6 +77,16 @@ Practice routes include `/auth/login`, `/forms/basic`, `/interactions/buttons`, 
 
 Form submissions use real persistence through `POST /api/forms`; confirmation records are available at `GET /api/forms/:id`. The deterministic server-error address is `server-error@test.local`.
 
+## Phase 3 data and synchronization labs
+
+- Tables: `/tables/static`, `/tables/dynamic`, `/tables/virtual`
+- Persistent product CRUD: `/crud/products`
+- Uploads and downloads: `/files/upload`, `/files/download`
+- Wait and synchronization scenarios: `/dynamic-elements?delay=1500&deterministic=true`
+- Web components: `/shadow-dom`
+
+Table data contains exactly 100 generated users and supports server pagination, filtering, and multi-column sorting. Product writes require Admin, use optimistic version checks, preserve history, soft-delete with deterministic undo tokens, and return 409 for duplicate names/conflicts. Uploads persist in SQLite, accept TXT/CSV/PDF/PNG/JPEG up to 5 MB, and reject zero-byte, duplicate, disallowed, and simulated-failure scenarios.
+
 ## Environment
 
 See `.env.example`. Test-control endpoints are unavailable when `TEST_MODE=false`. Always replace `JWT_SECRET` outside local development. No payment/email provider or hardware permission is contacted.
@@ -82,7 +98,8 @@ Install the example project's dependencies, start this app, then use `npm test` 
 ## Troubleshooting
 
 - Delete `data/testlab.db` only when the server is stopped, or use `npm run reset`.
-- If port 3000/5173 is busy, set `PORT` and adjust the Vite proxy.
+- The API uses port `3100` and Vite uses port `5173`. If either is busy, set
+  `PORT` and adjust the matching target in `vite.config.ts`.
 - File uploads are limited to 5 MB and five files.
 - Login once as admin before testing protected management APIs.
 

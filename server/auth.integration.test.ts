@@ -101,14 +101,16 @@ test("password policy, duplicate registration, and change password errors are de
     .post("/api/auth/register")
     .send({ name: "Weak", email: "weak@test.local", password: "weak" })
     .expect(422);
-  await request(app)
+  const duplicate = await request(app)
     .post("/api/auth/register")
     .send({
       name: "Duplicate",
       email: "admin@testlab.local",
       password: "Valid123!",
     })
+    .expect("content-type", /json/)
     .expect(409);
+  assert.equal(duplicate.body.error, "Email already registered");
   const login = await request(app)
     .post("/api/auth/login")
     .send({ email: "viewer@testlab.local", password: "Viewer123!" })

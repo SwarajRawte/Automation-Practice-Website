@@ -11,6 +11,7 @@ import { db, reset, seed } from "./db.js";
 import { auth, roles } from "./auth.js";
 import { spec } from "./openapi.js";
 import { authRouter } from "./authRoutes.js";
+import { phase3Router } from "./phase3Routes.js";
 const app = express(),
   server = createServer(app),
   io = new Server(server, { cors: { origin: "*" } }),
@@ -25,6 +26,7 @@ app.get("/api/health", (_q, r) => r.json({ status: "UP" }));
 app.use("/api/docs", swagger.serve, swagger.setup(spec));
 app.use("/api/auth", authRouter);
 app.use("/api", auth);
+app.use("/api", phase3Router);
 app.get("/api/products", (q, r) => {
   const page = Math.max(1, Number(q.query.page) || 1),
     size = Math.min(100, Number(q.query.size) || 10),
@@ -207,6 +209,31 @@ io.on("connection", (s) => {
   s.emit("status", { online: true, id: s.id });
   s.on("chat", (m) => io.emit("chat", { ...m, id: `msg-${Date.now()}` }));
 });
+// API requests must never fall through to the SPA's HTML response. This keeps
+// every client-side API error parseable and makes incorrect routes diagnosable.
+app.use("/api", (_q, r) =>
+  r.status(404).json({ error: "API endpoint not found", code: "NOT_FOUND" }),
+);
+app.use(
+  "/api",
+  (
+    error: Error,
+    _q: express.Request,
+    r: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    void _next;
+    console.error(error);
+    const status = (error as Error & { status?: number }).status || 500;
+    r.status(status).json({
+      error:
+        status < 500
+          ? "The request body is invalid"
+          : "The server could not process the request",
+      code: status < 500 ? "INVALID_REQUEST" : "INTERNAL_ERROR",
+    });
+  },
+);
 const dist = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../dist",
@@ -216,6 +243,7 @@ if (fs.existsSync(dist)) {
   const indexHtml = fs.readFileSync(path.join(dist, "index.html"), "utf8");
   app.use((_q, r) => r.type("html").send(indexHtml));
 }
-server.listen(Number(process.env.PORT || 3000), () =>
-  console.log("E2E Test Lab ready"),
+const port = Number(process.env.PORT || 3100);
+server.listen(port, () =>
+  console.log(`E2E Test Lab API ready at http://localhost:${port}`),
 );
