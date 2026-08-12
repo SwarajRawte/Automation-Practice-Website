@@ -98,7 +98,8 @@ Install the example project's dependencies, start this app, then use `npm test` 
 ## Troubleshooting
 
 - Delete `data/testlab.db` only when the server is stopped, or use `npm run reset`.
-- If port 3000/5173 is busy, set `PORT` and adjust the Vite proxy.
+- The API uses port `3100` and Vite uses port `5173`. If either is busy, set
+  `PORT` and adjust the matching target in `vite.config.ts`.
 - File uploads are limited to 5 MB and five files.
 - Login once as admin before testing protected management APIs.
 

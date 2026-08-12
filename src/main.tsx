@@ -27,6 +27,7 @@ import {
   LayoutDashboard,
   Menu,
   MonitorSmartphone,
+  MousePointerClick,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -62,6 +63,7 @@ const modules = [
   ["Authentication", "/auth/login"],
   ["Forms", "/forms/basic"],
   ["Interactions", "/interactions/buttons"],
+  ["Mouse & Actions", "/interactions/actions"],
   ["Alerts & Modals", "/alerts"],
   ["Windows & Frames", "/windows"],
   ["Tables", "/tables/dynamic"],
@@ -102,6 +104,7 @@ const navGroups = [
     items: [
       ["Forms", "/forms/basic", FormInput],
       ["Buttons & Interactions", "/interactions/buttons", Activity],
+      ["Mouse & Actions", "/interactions/actions", MousePointerClick],
       ["Keyboard", "/interactions/keyboard", Keyboard],
       ["Alerts & Modals", "/alerts", AlertTriangle],
       ["Windows & Frames", "/windows", AppWindow],
@@ -157,7 +160,21 @@ const api = async (url: string, init?: RequestInit) => {
       ...init?.headers,
     },
   });
-  const data = r.status === 204 ? null : await r.json();
+  const contentType = r.headers.get("content-type") || "";
+  let data: any = null;
+  if (r.status !== 204) {
+    if (contentType.includes("application/json")) {
+      data = await r.json();
+    } else {
+      // A missing API server or an incorrect proxy can return the SPA HTML here.
+      // Keep that infrastructure problem out of the form's user-facing errors.
+      await r.text();
+      data = {
+        error:
+          "The API returned an unexpected response. Make sure the application server is running and try again.",
+      };
+    }
+  }
   if (!r.ok) {
     if (r.status === 401 && !url.startsWith("/api/auth/")) {
       localStorage.removeItem("token");
@@ -167,8 +184,10 @@ const api = async (url: string, init?: RequestInit) => {
         `/auth/login?reason=session-expired&returnUrl=${encodeURIComponent(location.pathname)}`,
       );
     }
-    throw Error(data.error || `HTTP ${r.status}`);
+    throw Error(data?.error || `HTTP ${r.status}`);
   }
+  if (!contentType.includes("application/json") && r.status !== 204)
+    throw Error(data.error);
   return data;
 };
 const clearAuthentication = () => {
@@ -1142,6 +1161,15 @@ function Auth() {
     });
   const update = (key: string, value: string | boolean) =>
     set({ ...form, [key]: value });
+  const demoAccounts = [
+    { role: "Administrator", email: "admin@testlab.local", password: "Admin123!" },
+    { role: "Standard user", email: "user@testlab.local", password: "User123!" },
+    { role: "Read-only viewer", email: "viewer@testlab.local", password: "Viewer123!" },
+  ];
+  const fillDemoAccount = (email: string, password: string) => {
+    set({ ...form, email, password });
+    setMsg("");
+  };
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg("");
@@ -1402,6 +1430,31 @@ function Auth() {
             {msg}
           </output>
         </form>
+        {mode === "login" && (
+          <section className="demo-accounts" aria-labelledby="demo-logins-title">
+            <div className="demo-accounts__heading">
+              <strong id="demo-logins-title">Demo logins</strong>
+              <span>Click an account to fill the form</span>
+            </div>
+            <div className="demo-accounts__list">
+              {demoAccounts.map((account) => (
+                <button
+                  key={account.email}
+                  type="button"
+                  className="demo-account"
+                  data-testid={`demo-${account.email.split("@")[0]}`}
+                  onClick={() => fillDemoAccount(account.email, account.password)}
+                >
+                  <span>
+                    <strong>{account.role}</strong>
+                    <small>{account.email}</small>
+                  </span>
+                  <code>{account.password}</code>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         {mode === "login" && (
           <div className="login-links">
             <NavLink
