@@ -56,6 +56,7 @@ import {
   Phase3Dynamic,
   Phase3ShadowDom,
 } from "./phase3";
+import { Phase4Admin, Phase4Network, Phase4Realtime, Phase4Shop } from "./phase4";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
 import "./styles.css";
 const modules = [
@@ -368,13 +369,13 @@ export function Layout() {
             <Route path="/frames" element={<Phase2Contexts />} />
             <Route path="/tables/*" element={<Phase3Tables />} />
             <Route path="/crud/products" element={<Phase3Products />} />
-            <Route path="/shop/*" element={<Shop />} />
+            <Route path="/shop/*" element={<Phase4Shop />} />
             <Route path="/files/*" element={<Phase3Files />} />
             <Route path="/dynamic-elements" element={<Phase3Dynamic />} />
             <Route path="/shadow-dom" element={<Phase3ShadowDom />} />
             <Route path="/storage" element={<Storage />} />
-            <Route path="/api-playground" element={<ApiPlay />} />
-            <Route path="/realtime" element={<Realtime />} />
+            <Route path="/api-playground" element={<Phase4Network />} />
+            <Route path="/realtime" element={<Phase4Realtime />} />
             <Route path="/accessibility/*" element={<Accessibility />} />
             <Route path="/visual" element={<Visual />} />
             <Route path="/responsive" element={<Responsive />} />
@@ -384,7 +385,7 @@ export function Layout() {
               path="/admin"
               element={
                 <Protected role="ADMIN">
-                  <Admin />
+                  <Phase4Admin />
                 </Protected>
               }
             />
@@ -603,13 +604,13 @@ function AppLayout() {
             <Route path="/frames" element={<Phase2Contexts />} />
             <Route path="/tables/*" element={<Phase3Tables />} />
             <Route path="/crud/products" element={<Phase3Products />} />
-            <Route path="/shop/*" element={<Shop />} />
+            <Route path="/shop/*" element={<Phase4Shop />} />
             <Route path="/files/*" element={<Phase3Files />} />
             <Route path="/dynamic-elements" element={<Phase3Dynamic />} />
             <Route path="/shadow-dom" element={<Phase3ShadowDom />} />
             <Route path="/storage" element={<Storage />} />
-            <Route path="/api-playground" element={<ApiPlay />} />
-            <Route path="/realtime" element={<Realtime />} />
+            <Route path="/api-playground" element={<Phase4Network />} />
+            <Route path="/realtime" element={<Phase4Realtime />} />
             <Route path="/accessibility/*" element={<Accessibility />} />
             <Route path="/visual" element={<Visual />} />
             <Route path="/responsive" element={<Responsive />} />
@@ -619,7 +620,7 @@ function AppLayout() {
               path="/admin"
               element={
                 <Protected role="ADMIN">
-                  <Admin />
+                  <Phase4Admin />
                 </Protected>
               }
             />
@@ -1823,6 +1824,8 @@ function Products() {
     </>
   );
 }
+// Kept as a compact legacy fixture for backwards-compatible source examples.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Shop() {
   const [cart, setCart] = useState<any[]>(
       JSON.parse(localStorage.getItem("cart") || "[]"),
@@ -2012,6 +2015,7 @@ function Storage() {
     </>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function ApiPlay() {
   const [code, setCode] = useState(200),
     [out, setOut] = useState("");
@@ -2045,6 +2049,7 @@ function ApiPlay() {
     </>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Realtime() {
   const [events, setEvents] = useState<string[]>([]),
     [message, setMessage] = useState("Hello automation");
@@ -2233,6 +2238,7 @@ function Errors() {
     </>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Admin() {
   const u = JSON.parse(localStorage.getItem("user") || "null");
   if (u?.role !== "ADMIN")

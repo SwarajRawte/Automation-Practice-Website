@@ -31,3 +31,11 @@ Product IDs 1–30 are reseeded predictably. Admin tests should cover create, du
 Use files in `test-assets/` for upload assertions. Duplicate content returns 409, unsupported types 415, zero bytes 422, and `?fail=true` returns 503. Downloads expose deterministic text, CSV, minimal PDF/invoice, delayed, and failed variants.
 
 Configure synchronization waits with the `delay` query parameter. Assert visible outcomes instead of sleeping: appearance/disappearance, changed text, enabled state, spinner/skeleton replacement, progress, polling completion, debounced results, and DOM generation replacement. Shadow DOM tests cover open, nested, multiple, dynamic, and intentionally inaccessible closed roots.
+## Phase 4 scenarios
+
+- Filter and sort the product catalog, add an item to wishlist, and verify cart persistence.
+- Complete checkout using `4111111111111111` and assert the order total and confirmation.
+- Assert decline with `4000000000000002`, timeout with `4000000000009995`, and invalid discount errors.
+- Configure latency, forced status, or offline mode and inspect the network playground response.
+- Verify chat/test/order events in the realtime event stream and reconnection state.
+- Verify only Admin can load metrics, orders, audit activity, and the CSV export.

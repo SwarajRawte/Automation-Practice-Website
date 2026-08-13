@@ -12,6 +12,7 @@ import { auth, roles } from "./auth.js";
 import { spec } from "./openapi.js";
 import { authRouter } from "./authRoutes.js";
 import { phase3Router } from "./phase3Routes.js";
+import { createPhase4Router, networkConfig } from "./phase4Routes.js";
 const app = express(),
   server = createServer(app),
   io = new Server(server, { cors: { origin: "*" } }),
@@ -27,6 +28,7 @@ app.use("/api/docs", swagger.serve, swagger.setup(spec));
 app.use("/api/auth", authRouter);
 app.use("/api", auth);
 app.use("/api", phase3Router);
+app.use("/api", createPhase4Router(io));
 app.get("/api/products", (q, r) => {
   const page = Math.max(1, Number(q.query.page) || 1),
     size = Math.min(100, Number(q.query.size) || 10),
@@ -174,8 +176,11 @@ app.post("/api/test/seed", only, (_q, r) => {
   seed();
   r.json({ message: "Database seeded" });
 });
-for (const name of ["clock", "network"])
-  app.post(`/api/test/${name}`, only, (q, r) => r.json({ [name]: q.body }));
+app.post("/api/test/clock", only, (q, r) => r.json({ clock: q.body }));
+app.post("/api/test/network", only, (q, r) => {
+  Object.assign(networkConfig, q.body);
+  r.json({ network: networkConfig });
+});
 app.post("/api/test/events", only, (q, r) => {
   io.emit("test-event", q.body);
   r.json({ sent: true });
@@ -208,6 +213,8 @@ app.get("/api/admin/audit", auth, roles("ADMIN"), (_q, r) =>
 io.on("connection", (s) => {
   s.emit("status", { online: true, id: s.id });
   s.on("chat", (m) => io.emit("chat", { ...m, id: `msg-${Date.now()}` }));
+  s.on("counter", () => io.emit("counter", { value: Date.now() % 1000 }));
+  s.on("disconnect", () => s.broadcast.emit("presence", { online: false, id: s.id }));
 });
 // API requests must never fall through to the SPA's HTML response. This keeps
 // every client-side API error parseable and makes incorrect routes diagnosable.
