@@ -107,4 +107,7 @@ See [TESTING_GUIDE.md](TESTING_GUIDE.md), [API_GUIDE.md](API_GUIDE.md), and [MOD
 
 ## Known limitations and next improvements
 
-This deliberately compact lab demonstrates every major automation surface, but advanced rich editors, real cross-origin frames, full checkout/order persistence, closed-shadow-root access, camera/microphone hardware, email delivery, and real payments are simulations or documented constraints. Natural next steps are deeper per-module variants, snapshot/restore, refresh-token rotation, richer CRUD history, and additional framework examples.
+This deliberately compact lab demonstrates every major automation surface, but advanced rich editors, real cross-origin frames, closed-shadow-root access, camera/microphone hardware, email delivery, and real payments are simulations or documented constraints. Natural next steps are deeper per-module variants, snapshot/restore, richer accessibility/visual exercises, and additional framework examples.
+## Phase 4 application and network workflows
+
+Phase 4 adds a complete mock commerce flow across `/shop/products`, `/shop/cart`, `/shop/checkout`, and `/shop/orders`, deterministic payment outcomes, persisted orders and stock, configurable API/network simulations, WebSocket exercises, and an admin-only operational dashboard with CSV export. See `PHASE_4.md` for the route and scenario checklist.

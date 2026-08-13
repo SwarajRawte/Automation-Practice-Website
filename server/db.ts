@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS form_submissions(id INTEGER PRIMARY KEY AUTOINCREMENT
 CREATE TABLE IF NOT EXISTS auth_tokens(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,type TEXT NOT NULL,token_hash TEXT UNIQUE NOT NULL,expires_at TEXT NOT NULL,revoked INTEGER DEFAULT 0,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);`);
 db.exec(`CREATE TABLE IF NOT EXISTS product_history(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER NOT NULL,action TEXT NOT NULL,snapshot TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS uploaded_files(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,size INTEGER NOT NULL,mime_type TEXT NOT NULL,sha256 TEXT UNIQUE NOT NULL,data BLOB,created_at TEXT NOT NULL);`);
+db.exec(`CREATE TABLE IF NOT EXISTS order_items(id INTEGER PRIMARY KEY AUTOINCREMENT,order_id INTEGER NOT NULL,product_id INTEGER NOT NULL,name TEXT NOT NULL,price REAL NOT NULL,quantity INTEGER NOT NULL,FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS wishlists(user_id INTEGER NOT NULL,product_id INTEGER NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(user_id,product_id));`);
 try {
   db.exec("ALTER TABLE users ADD COLUMN session_version INTEGER DEFAULT 0");
 } catch {
@@ -49,7 +51,7 @@ export function seed() {
       locked,
     ),
   );
-  db.exec("DELETE FROM products; DELETE FROM orders;");
+  db.exec("DELETE FROM order_items; DELETE FROM wishlists; DELETE FROM products; DELETE FROM orders;");
   const p = db.prepare(
     "INSERT INTO products(id,name,category,price,inventory,status,updated_at) VALUES(?,?,?,?,?,?,?)",
   );
@@ -75,10 +77,15 @@ export function seed() {
       50 + i * 12,
       "2026-01-01T12:00:00Z",
     );
+  const item = db.prepare(
+    "INSERT INTO order_items(order_id,product_id,name,price,quantity) VALUES(?,?,?,?,?)",
+  );
+  for (let i = 1; i <= 12; i++)
+    item.run(1000 + i, i, `Test Product ${String(i).padStart(3, "0")}`, Number((9.99 + i * 3.25).toFixed(2)), 1);
 }
 export function reset() {
   db.exec(
-    "DELETE FROM auth_tokens; DELETE FROM audit; DELETE FROM form_submissions; DELETE FROM product_history; DELETE FROM uploaded_files; DELETE FROM users;",
+    "DELETE FROM auth_tokens; DELETE FROM audit; DELETE FROM form_submissions; DELETE FROM product_history; DELETE FROM uploaded_files; DELETE FROM order_items; DELETE FROM wishlists; DELETE FROM users;",
   );
   seed();
 }
