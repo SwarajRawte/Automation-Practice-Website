@@ -57,6 +57,14 @@ import {
   Phase3ShadowDom,
 } from "./phase3";
 import { Phase4Admin, Phase4Network, Phase4Realtime, Phase4Shop } from "./phase4";
+import {
+  Phase5Accessibility,
+  Phase5Errors,
+  Phase5I18n,
+  Phase5Responsive,
+  Phase5Storage,
+  Phase5Visual,
+} from "./phase5";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
 import "./styles.css";
 const modules = [
@@ -373,14 +381,14 @@ export function Layout() {
             <Route path="/files/*" element={<Phase3Files />} />
             <Route path="/dynamic-elements" element={<Phase3Dynamic />} />
             <Route path="/shadow-dom" element={<Phase3ShadowDom />} />
-            <Route path="/storage" element={<Storage />} />
+            <Route path="/storage" element={<Phase5Storage />} />
             <Route path="/api-playground" element={<Phase4Network />} />
             <Route path="/realtime" element={<Phase4Realtime />} />
-            <Route path="/accessibility/*" element={<Accessibility />} />
-            <Route path="/visual" element={<Visual />} />
-            <Route path="/responsive" element={<Responsive />} />
-            <Route path="/i18n" element={<I18n />} />
-            <Route path="/errors" element={<Errors />} />
+            <Route path="/accessibility/*" element={<Phase5Accessibility />} />
+            <Route path="/visual" element={<Phase5Visual />} />
+            <Route path="/responsive" element={<Phase5Responsive />} />
+            <Route path="/i18n" element={<Phase5I18n />} />
+            <Route path="/errors" element={<Phase5Errors />} />
             <Route
               path="/admin"
               element={
@@ -397,7 +405,7 @@ export function Layout() {
                 </Protected>
               }
             />
-            <Route path="*" element={<Errors />} />
+            <Route path="*" element={<Phase5Errors />} />
           </Routes>
         </main>
       </div>
@@ -608,14 +616,14 @@ function AppLayout() {
             <Route path="/files/*" element={<Phase3Files />} />
             <Route path="/dynamic-elements" element={<Phase3Dynamic />} />
             <Route path="/shadow-dom" element={<Phase3ShadowDom />} />
-            <Route path="/storage" element={<Storage />} />
+            <Route path="/storage" element={<Phase5Storage />} />
             <Route path="/api-playground" element={<Phase4Network />} />
             <Route path="/realtime" element={<Phase4Realtime />} />
-            <Route path="/accessibility/*" element={<Accessibility />} />
-            <Route path="/visual" element={<Visual />} />
-            <Route path="/responsive" element={<Responsive />} />
-            <Route path="/i18n" element={<I18n />} />
-            <Route path="/errors" element={<Errors />} />
+            <Route path="/accessibility/*" element={<Phase5Accessibility />} />
+            <Route path="/visual" element={<Phase5Visual />} />
+            <Route path="/responsive" element={<Phase5Responsive />} />
+            <Route path="/i18n" element={<Phase5I18n />} />
+            <Route path="/errors" element={<Phase5Errors />} />
             <Route
               path="/admin"
               element={
@@ -632,7 +640,7 @@ function AppLayout() {
                 </Protected>
               }
             />
-            <Route path="*" element={<Errors />} />
+            <Route path="*" element={<Phase5Errors />} />
           </Routes>
         </main>
       </div>
@@ -1962,6 +1970,7 @@ export function Shadow() {
     </>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Storage() {
   const [v, setV] = useState(
     () => localStorage.getItem("lab-preference") || "unset",
@@ -2086,6 +2095,7 @@ function Realtime() {
     </>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Accessibility() {
   return (
     <>
@@ -2113,6 +2123,7 @@ function Accessibility() {
     </>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Visual() {
   const freeze = new URLSearchParams(location.search).get("freeze") === "true";
   return (
@@ -2141,6 +2152,7 @@ function Visual() {
     </>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Responsive() {
   const [size, setSize] = useState([innerWidth, innerHeight]);
   useEffect(() => {
@@ -2164,6 +2176,7 @@ function Responsive() {
     </>
   );
 }
+// Kept temporarily for compatibility with older saved bundles.
 const translations: any = {
   en: ["Internationalization", "Hello"],
   es: ["Internacionalización", "Hola"],
@@ -2171,6 +2184,7 @@ const translations: any = {
   hi: ["अंतर्राष्ट्रीयकरण", "नमस्ते"],
   ar: ["التدويل", "مرحباً"],
 };
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function I18n() {
   const [lang, setLang] = useState(localStorage.getItem("lang") || "en");
   const change = (x: string) => {
@@ -2207,6 +2221,7 @@ function I18n() {
     </div>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Errors() {
   const [out, setOut] = useState("");
   return (

@@ -111,3 +111,7 @@ This deliberately compact lab demonstrates every major automation surface, but a
 ## Phase 4 application and network workflows
 
 Phase 4 adds a complete mock commerce flow across `/shop/products`, `/shop/cart`, `/shop/checkout`, and `/shop/orders`, deterministic payment outcomes, persisted orders and stock, configurable API/network simulations, WebSocket exercises, and an admin-only operational dashboard with CSV export. See `PHASE_4.md` for the route and scenario checklist.
+
+## Phase 5 quality and browser-state labs
+
+Phase 5 expands `/storage`, `/accessibility/*`, `/visual`, `/responsive`, `/i18n`, and `/errors` into deterministic labs for isolated browser state, WCAG scanning and keyboard behavior, stable and intentionally changed screenshots, explicit viewport breakpoints, Unicode/RTL localization, and structured failure recovery. See `PHASE_5.md` for the scenario checklist.
