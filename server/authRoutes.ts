@@ -6,7 +6,25 @@ import { auth, sign } from "./auth.js";
 import type { AuthRequest, Claims, Role } from "./types.js";
 export const authRouter = Router();
 const testMode = process.env.TEST_MODE !== "false",
-  maxAttempts = Number(process.env.MAX_LOGIN_ATTEMPTS || 5);
+  configuredMaxAttempts = Number(process.env.MAX_LOGIN_ATTEMPTS || 5),
+  maxAttempts =
+    Number.isInteger(configuredMaxAttempts) && configuredMaxAttempts > 0
+      ? configuredMaxAttempts
+      : 5;
+const passwordPattern = /(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s]).{8,}/,
+  emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/,
+  isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value),
+  normalizeEmail = (value: unknown) =>
+    typeof value === "string" ? value.trim().toLowerCase() : "",
+  validPassword = (value: unknown): value is string =>
+    typeof value === "string" && passwordPattern.test(value),
+  cookieOptions = {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+  };
 const hash = (value: string) =>
   crypto.createHash("sha256").update(value).digest("hex");
 const publicUser = (u: any) => ({
@@ -33,9 +51,13 @@ function issueToken(
   type: "refresh" | "verify" | "reset",
   hours: number,
 ) {
-  const plain = testMode
-    ? `${type.toUpperCase()}-${userId}-TEST`
-    : crypto.randomBytes(32).toString("hex");
+  // Verification/reset values stay deterministic in test mode. Refresh
+  // tokens must still be unique so rotation actually invalidates a stolen
+  // predecessor.
+  const plain =
+    testMode && type !== "refresh"
+      ? `${type.toUpperCase()}-${userId}-TEST`
+      : crypto.randomBytes(32).toString("hex");
   db.prepare("DELETE FROM auth_tokens WHERE user_id=? AND type=?").run(
     userId,
     type,
@@ -63,30 +85,38 @@ function consumeToken(token: string, type: string) {
   return row;
 }
 authRouter.post("/register", (req, res) => {
-  const { email, name, password } = req.body;
-  if (
-    !email ||
-    !name ||
-    !/(?=.*[A-Z])(?=.*\d)(?=.*[^\w]).{8,}/.test(password || "")
-  )
+  const body = isRecord(req.body) ? req.body : {},
+    email = normalizeEmail(body.email),
+    name = typeof body.name === "string" ? body.name.trim() : "",
+    password = body.password;
+  if (!emailPattern.test(email) || !name || name.length > 100)
+    return res.status(422).json({
+      error: "A valid email and name are required",
+      code: "VALIDATION_ERROR",
+    });
+  if (!validPassword(password))
     return res.status(422).json({
       error:
         "Password must be 8+ characters with uppercase, number, and symbol",
       code: "WEAK_PASSWORD",
     });
+  if (db.prepare("SELECT id FROM users WHERE email=?").get(email))
+    return res
+      .status(409)
+      .json({ error: "Email already registered", code: "DUPLICATE_EMAIL" });
   try {
     const out = db
       .prepare(
         "INSERT INTO users(email,name,password,role,verified,locked,failed_attempts) VALUES(?,?,?,'USER',0,0,0)",
       )
-      .run(String(email).toLowerCase(), name, bcrypt.hashSync(password, 10));
+      .run(email, name, bcrypt.hashSync(password, 10));
     const id = Number(out.lastInsertRowid),
       verificationToken = issueToken(id, "verify", 24);
     audit("USER_REGISTERED", { userId: id, email });
     res.status(201).json({
       user: {
         id,
-        email: String(email).toLowerCase(),
+        email,
         name,
         role: "USER",
         verified: false,
@@ -102,7 +132,9 @@ authRouter.post("/register", (req, res) => {
   }
 });
 authRouter.post("/verify", (req, res) => {
-  const row = consumeToken(req.body.token || "", "verify");
+  const body = isRecord(req.body) ? req.body : {},
+    token = typeof body.token === "string" ? body.token : "",
+    row = consumeToken(token, "verify");
   if (!row)
     return res.status(400).json({
       error: "Invalid or expired verification token",
@@ -113,13 +145,15 @@ authRouter.post("/verify", (req, res) => {
   res.json({ message: "Email verified" });
 });
 authRouter.post("/login", (req, res) => {
-  const email = String(req.body.email || "").toLowerCase(),
-    u = db.prepare("SELECT * FROM users WHERE email=?").get(email) as any;
-  if (!email || !req.body.password)
+  const body = isRecord(req.body) ? req.body : {},
+    email = normalizeEmail(body.email),
+    password = typeof body.password === "string" ? body.password : "";
+  if (!email || !password)
     return res.status(422).json({
       error: "Email and password are required",
       code: "VALIDATION_ERROR",
     });
+  const u = db.prepare("SELECT * FROM users WHERE email=?").get(email) as any;
   const fail = () => {
     if (u) {
       const attempts = u.failed_attempts + 1,
@@ -140,7 +174,7 @@ authRouter.post("/login", (req, res) => {
       code: "INVALID_CREDENTIALS",
     });
   };
-  if (!u || !bcrypt.compareSync(req.body.password || "", u.password))
+  if (!u || !bcrypt.compareSync(password, u.password))
     return fail();
   if (u.locked)
     return res
@@ -161,15 +195,13 @@ authRouter.post("/login", (req, res) => {
     refreshToken = issueToken(
       u.id,
       "refresh",
-      req.body.rememberMe || req.body.remember ? 24 * 30 : 24,
+      body.rememberMe || body.remember ? 24 * 30 : 24,
     );
   audit("LOGIN_SUCCESS", { userId: u.id });
   const accessToken = sign(claims);
   res.cookie("access_token", accessToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: false,
-    ...(req.body.rememberMe || req.body.remember
+    ...cookieOptions,
+    ...(body.rememberMe || body.remember
       ? { maxAge: 30 * 24 * 3_600_000 }
       : {}),
   });
@@ -181,13 +213,16 @@ authRouter.post("/login", (req, res) => {
   });
 });
 authRouter.post("/refresh", (req, res) => {
-  const row = consumeToken(req.body.refreshToken || "", "refresh");
+  const body = isRecord(req.body) ? req.body : {},
+    refreshToken =
+      typeof body.refreshToken === "string" ? body.refreshToken : "",
+    row = consumeToken(refreshToken, "refresh");
   if (!row)
     return res.status(401).json({
       error: "Invalid or expired refresh token",
       code: "INVALID_REFRESH_TOKEN",
     });
-  if (row.locked)
+  if (row.locked || !row.verified)
     return res
       .status(423)
       .json({ error: "Account is locked", code: "ACCOUNT_LOCKED" });
@@ -199,11 +234,7 @@ authRouter.post("/refresh", (req, res) => {
     sessionVersion: Number(row.session_version || 0),
   };
   const accessToken = sign(claims);
-  res.cookie("access_token", accessToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: false,
-  });
+  res.cookie("access_token", accessToken, cookieOptions);
   res.json({
     token: accessToken,
     refreshToken: issueToken(row.user_id, "refresh", 24),
@@ -211,26 +242,40 @@ authRouter.post("/refresh", (req, res) => {
   });
 });
 authRouter.post("/logout", (req, res) => {
-  if (req.body.refreshToken) {
-    const token = db
-      .prepare("SELECT user_id FROM auth_tokens WHERE token_hash=?")
-      .get(hash(req.body.refreshToken)) as { user_id: number } | undefined;
-    if (token) {
+  const body = isRecord(req.body) ? req.body : {},
+    refreshToken =
+      typeof body.refreshToken === "string" ? body.refreshToken : "";
+  const completeLogout = (userId?: number) => {
+    if (userId) {
       db.prepare(
         "UPDATE users SET session_version=session_version+1 WHERE id=?",
-      ).run(token.user_id);
-      db.prepare("UPDATE auth_tokens SET revoked=1 WHERE user_id=?").run(
-        token.user_id,
-      );
+      ).run(userId);
+      db.prepare("UPDATE auth_tokens SET revoked=1 WHERE user_id=?").run(userId);
     }
+    res.clearCookie("access_token", cookieOptions);
+    return res.json({ message: "Logged out" });
+  };
+  if (refreshToken) {
+    const token = db
+      .prepare(
+        "SELECT user_id FROM auth_tokens WHERE token_hash=? AND type='refresh' AND revoked=0",
+      )
+      .get(hash(refreshToken)) as { user_id: number } | undefined;
+    return completeLogout(token?.user_id);
   }
-  res.clearCookie("access_token");
-  res.json({ message: "Logged out" });
+  // A browser may have lost localStorage while retaining the HTTP-only access
+  // cookie. Authenticate that cookie so logout still revokes the server-side
+  // session even when no refresh token was submitted.
+  return auth(req as AuthRequest, res, () =>
+    completeLogout((req as AuthRequest).user!.id),
+  );
 });
 const forgotPassword = (req: any, res: any) => {
+  const body = isRecord(req.body) ? req.body : {},
+    email = normalizeEmail(body.email);
   const u = db
     .prepare("SELECT id FROM users WHERE email=?")
-    .get(String(req.body.email || "").toLowerCase()) as any;
+    .get(email) as any;
   const resetToken = u ? issueToken(u.id, "reset", 1) : undefined;
   res.json({
     message: "If the account exists, a reset email was simulated",
@@ -240,18 +285,23 @@ const forgotPassword = (req: any, res: any) => {
 authRouter.post("/forgot", forgotPassword);
 authRouter.post("/forgot-password", forgotPassword);
 authRouter.post("/reset-password", (req, res) => {
-  const row = consumeToken(req.body.token || "", "reset");
+  const body = isRecord(req.body) ? req.body : {},
+    password = body.password;
+  // Do not consume a one-time reset token when the replacement password is
+  // rejected; callers must be able to correct the validation error and retry.
+  if (!validPassword(password))
+    return res
+      .status(422)
+      .json({ error: "Password does not meet policy", code: "WEAK_PASSWORD" });
+  const token = typeof body.token === "string" ? body.token : "",
+    row = consumeToken(token, "reset");
   if (!row)
     return res
       .status(400)
       .json({ error: "Invalid or expired reset token", code: "INVALID_TOKEN" });
-  if (!/(?=.*[A-Z])(?=.*\d)(?=.*[^\w]).{8,}/.test(req.body.password || ""))
-    return res
-      .status(422)
-      .json({ error: "Password does not meet policy", code: "WEAK_PASSWORD" });
   db.prepare(
-    "UPDATE users SET password=?,locked=0,failed_attempts=0 WHERE id=?",
-  ).run(bcrypt.hashSync(req.body.password, 10), row.user_id);
+    "UPDATE users SET password=?,locked=0,failed_attempts=0,session_version=session_version+1 WHERE id=?",
+  ).run(bcrypt.hashSync(password, 10), row.user_id);
   db.prepare(
     "UPDATE auth_tokens SET revoked=1 WHERE user_id=? AND type='refresh'",
   ).run(row.user_id);
@@ -276,19 +326,28 @@ authRouter.post("/change-password", auth, (req: AuthRequest, res) => {
   const u = db
     .prepare("SELECT * FROM users WHERE id=?")
     .get(req.user!.id) as any;
-  if (!bcrypt.compareSync(req.body.currentPassword || "", u.password))
+  const body = isRecord(req.body) ? req.body : {},
+    currentPassword =
+      typeof body.currentPassword === "string" ? body.currentPassword : "",
+    newPassword = body.newPassword;
+  if (!currentPassword || !bcrypt.compareSync(currentPassword, u.password))
     return res.status(400).json({
       error: "Current password is incorrect",
       code: "INVALID_CURRENT_PASSWORD",
     });
-  if (!/(?=.*[A-Z])(?=.*\d)(?=.*[^\w]).{8,}/.test(req.body.newPassword || ""))
+  if (!validPassword(newPassword))
     return res
       .status(422)
       .json({ error: "Password does not meet policy", code: "WEAK_PASSWORD" });
-  db.prepare("UPDATE users SET password=? WHERE id=?").run(
-    bcrypt.hashSync(req.body.newPassword, 10),
+  db.prepare(
+    "UPDATE users SET password=?,session_version=session_version+1 WHERE id=?",
+  ).run(
+    bcrypt.hashSync(newPassword, 10),
     u.id,
   );
+  db.prepare(
+    "UPDATE auth_tokens SET revoked=1 WHERE user_id=? AND type='refresh'",
+  ).run(u.id);
   audit("PASSWORD_CHANGED", { userId: u.id });
-  res.json({ message: "Password changed" });
+  res.json({ message: "Password changed", reauthenticate: true });
 });

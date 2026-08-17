@@ -56,7 +56,12 @@ import {
   Phase3Dynamic,
   Phase3ShadowDom,
 } from "./phase3";
-import { Phase4Admin, Phase4Network, Phase4Realtime, Phase4Shop } from "./phase4";
+import {
+  Phase4Admin,
+  Phase4Network,
+  Phase4Realtime,
+  Phase4Shop,
+} from "./phase4";
 import {
   Phase5Accessibility,
   Phase5Errors,
@@ -158,6 +163,49 @@ const navGroups = [
     ],
   },
 ] as const;
+
+type StoredUser = {
+  id: string | number;
+  email: string;
+  name: string;
+  role: string;
+  [key: string]: unknown;
+};
+
+function readStoredUser(): StoredUser | null {
+  const value = localStorage.getItem("user");
+  if (!value) return null;
+  try {
+    const user = JSON.parse(value) as Partial<StoredUser> | null;
+    if (
+      !user ||
+      (typeof user.id !== "string" && typeof user.id !== "number") ||
+      typeof user.email !== "string" ||
+      typeof user.name !== "string" ||
+      typeof user.role !== "string"
+    ) {
+      localStorage.removeItem("user");
+      return null;
+    }
+    return user as StoredUser;
+  } catch {
+    localStorage.removeItem("user");
+    return null;
+  }
+}
+
+function safeReturnUrl(value: string | null, fallback = "/dashboard") {
+  if (!value || !value.startsWith("/") || value.startsWith("//"))
+    return fallback;
+  try {
+    const target = new URL(value, window.location.origin);
+    if (target.origin !== window.location.origin) return fallback;
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch {
+    return fallback;
+  }
+}
+
 const api = async (url: string, init?: RequestInit) => {
   const token = localStorage.getItem("token");
   const r = await fetch(url, {
@@ -189,8 +237,9 @@ const api = async (url: string, init?: RequestInit) => {
       localStorage.removeItem("token");
       localStorage.removeItem("refreshToken");
       localStorage.removeItem("user");
+      const returnUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
       window.location.replace(
-        `/auth/login?reason=session-expired&returnUrl=${encodeURIComponent(location.pathname)}`,
+        `/auth/login?reason=session-expired&returnUrl=${encodeURIComponent(returnUrl)}`,
       );
     }
     throw Error(data?.error || `HTTP ${r.status}`);
@@ -204,7 +253,7 @@ const clearAuthentication = () => {
   localStorage.removeItem("refreshToken");
   localStorage.removeItem("user");
 };
-async function validateSession() {
+async function performSessionValidation() {
   const token = localStorage.getItem("token");
   if (token) {
     const response = await fetch("/api/auth/session", {
@@ -215,6 +264,8 @@ async function validateSession() {
       localStorage.setItem("user", JSON.stringify(body.user));
       return body.user;
     }
+    if (![401, 403].includes(response.status))
+      throw new Error("The authentication service is unavailable.");
   }
   const refreshToken = localStorage.getItem("refreshToken");
   if (refreshToken) {
@@ -225,6 +276,11 @@ async function validateSession() {
     });
     if (refreshed.ok) {
       const tokens = await refreshed.json();
+      if (
+        typeof tokens.token !== "string" ||
+        typeof tokens.refreshToken !== "string"
+      )
+        throw new Error("The authentication service returned invalid data.");
       localStorage.setItem("token", tokens.token);
       localStorage.setItem("refreshToken", tokens.refreshToken);
       const session = await fetch("/api/auth/session", {
@@ -235,10 +291,26 @@ async function validateSession() {
         localStorage.setItem("user", JSON.stringify(body.user));
         return body.user;
       }
+      if (![401, 403].includes(session.status))
+        throw new Error("The authentication service is unavailable.");
+      clearAuthentication();
+      return null;
     }
+    if (![401, 403, 423].includes(refreshed.status))
+      throw new Error("The authentication service is unavailable.");
   }
   clearAuthentication();
   return null;
+}
+
+let sessionValidation: Promise<StoredUser | null> | null = null;
+function validateSession() {
+  if (!sessionValidation) {
+    sessionValidation = performSessionValidation().finally(() => {
+      sessionValidation = null;
+    });
+  }
+  return sessionValidation;
 }
 function AuthenticationLoading() {
   return (
@@ -248,48 +320,85 @@ function AuthenticationLoading() {
     </main>
   );
 }
+function AuthenticationError({ message }: { message: string }) {
+  return (
+    <main className="auth-loading" role="alert">
+      <div>
+        <strong>Unable to verify your session</strong>
+        <p>{message}</p>
+        <button onClick={() => window.location.reload()}>Retry</button>
+      </div>
+    </main>
+  );
+}
 function AuthGate({ children }: { children: React.ReactNode }) {
   const loc = useLocation(),
     nav = useNavigate(),
-    [state, setState] = useState<"loading" | "allowed" | "denied">("loading");
+    [state, setState] = useState<"loading" | "allowed" | "denied" | "error">(
+      "loading",
+    ),
+    [error, setError] = useState("");
   useEffect(() => {
     let active = true;
     const hadSession = Boolean(
       localStorage.getItem("token") || localStorage.getItem("refreshToken"),
     );
-    validateSession().then((user) => {
-      if (!active) return;
-      if (user) setState("allowed");
-      else {
-        setState("denied");
-        const reason = hadSession ? "&reason=session-expired" : "";
-        nav(
-          `/auth/login?returnUrl=${encodeURIComponent(loc.pathname + loc.search)}${reason}`,
-          { replace: true },
+    validateSession()
+      .then((user) => {
+        if (!active) return;
+        if (user) setState("allowed");
+        else {
+          setState("denied");
+          const reason = hadSession ? "&reason=session-expired" : "";
+          nav(
+            `/auth/login?returnUrl=${encodeURIComponent(loc.pathname + loc.search)}${reason}`,
+            { replace: true },
+          );
+        }
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "The authentication service is unavailable.",
         );
-      }
-    });
+        setState("error");
+      });
     return () => {
       active = false;
     };
   }, []);
   if (state === "loading") return <AuthenticationLoading />;
+  if (state === "error") return <AuthenticationError message={error} />;
   return state === "allowed" ? <>{children}</> : null;
 }
 function PublicGate({ children }: { children: React.ReactNode }) {
   const nav = useNavigate(),
-    [loading, setLoading] = useState(true);
+    [loading, setLoading] = useState(true),
+    [error, setError] = useState("");
   useEffect(() => {
     let active = true;
-    validateSession().then((user) => {
-      if (!active) return;
-      if (user) nav("/dashboard", { replace: true });
-      else setLoading(false);
-    });
+    validateSession()
+      .then((user) => {
+        if (!active) return;
+        if (user) nav("/dashboard", { replace: true });
+        else setLoading(false);
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "The authentication service is unavailable.",
+        );
+        setLoading(false);
+      });
     return () => {
       active = false;
     };
   }, []);
+  if (error) return <AuthenticationError message={error} />;
   return loading ? <AuthenticationLoading /> : <>{children}</>;
 }
 function Info({
@@ -307,7 +416,7 @@ function Info({
 }
 export function Layout() {
   const [open, setOpen] = useState(false);
-  const user = JSON.parse(localStorage.getItem("user") || "null");
+  const user = readStoredUser();
   const logout = async () => {
     try {
       await fetch("/api/auth/logout", {
@@ -419,7 +528,7 @@ function AppLayout() {
     [commandOpen, setCommandOpen] = useState(false),
     [query, setQuery] = useState(""),
     [theme, setTheme] = useState(localStorage.getItem("theme") || "system"),
-    user = JSON.parse(localStorage.getItem("user") || "null");
+    user = readStoredUser();
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("theme", theme);
@@ -792,7 +901,7 @@ const moduleMeta = [
   },
 ];
 function NewDashboard() {
-  const user = JSON.parse(localStorage.getItem("user") || "null"),
+  const user = readStoredUser(),
     [search, setSearch] = useState(""),
     [difficulty, setDifficulty] = useState("All"),
     [view, setView] = useState<"grid" | "list">("grid");
@@ -957,7 +1066,7 @@ function NewDashboard() {
   );
 }
 function Profile() {
-  const user = JSON.parse(localStorage.getItem("user") || "null"),
+  const user = readStoredUser(),
     [tab, setTab] = useState("Profile"),
     [saved, setSaved] = useState("");
   return (
@@ -1063,7 +1172,7 @@ function Profile() {
   );
 }
 export function Dashboard() {
-  const user = JSON.parse(localStorage.getItem("user") || "null");
+  const user = readStoredUser();
   return (
     <div data-testid="dashboard-page">
       <h2>Automation practice modules</h2>
@@ -1136,12 +1245,15 @@ function Protected({
 }) {
   const nav = useNavigate(),
     loc = useLocation(),
-    user = JSON.parse(localStorage.getItem("user") || "null");
+    user = readStoredUser();
   useEffect(() => {
     if (!user)
-      nav(`/auth/login?redirect=${encodeURIComponent(loc.pathname)}`, {
-        replace: true,
-      });
+      nav(
+        `/auth/login?returnUrl=${encodeURIComponent(loc.pathname + loc.search)}`,
+        {
+          replace: true,
+        },
+      );
   }, []);
   if (!user) return <p role="status">Redirecting to login…</p>;
   if (role && user.role !== role)
@@ -1171,9 +1283,21 @@ function Auth() {
   const update = (key: string, value: string | boolean) =>
     set({ ...form, [key]: value });
   const demoAccounts = [
-    { role: "Administrator", email: "admin@testlab.local", password: "Admin123!" },
-    { role: "Standard user", email: "user@testlab.local", password: "User123!" },
-    { role: "Read-only viewer", email: "viewer@testlab.local", password: "Viewer123!" },
+    {
+      role: "Administrator",
+      email: "admin@testlab.local",
+      password: "Admin123!",
+    },
+    {
+      role: "Standard user",
+      email: "user@testlab.local",
+      password: "User123!",
+    },
+    {
+      role: "Read-only viewer",
+      email: "viewer@testlab.local",
+      password: "Viewer123!",
+    },
   ];
   const fillDemoAccount = (email: string, password: string) => {
     set({ ...form, email, password });
@@ -1193,8 +1317,9 @@ function Auth() {
         localStorage.setItem("refreshToken", x.refreshToken);
         localStorage.setItem("user", JSON.stringify(x.user));
         setMsg(`Welcome ${x.user.name}`);
-        const redirect =
-          new URLSearchParams(loc.search).get("returnUrl") || "/dashboard";
+        const redirect = safeReturnUrl(
+          new URLSearchParams(loc.search).get("returnUrl"),
+        );
         window.location.replace(redirect);
       } else if (mode === "register") {
         const x = await api("/api/auth/register", {
@@ -1227,14 +1352,15 @@ function Auth() {
       } else if (mode === "change-password") {
         if (form.password !== form.confirmPassword)
           throw Error("Passwords do not match");
-        const x = await api("/api/auth/change-password", {
+        await api("/api/auth/change-password", {
           method: "POST",
           body: JSON.stringify({
             currentPassword: form.currentPassword,
             newPassword: form.password,
           }),
         });
-        setMsg(x.message);
+        clearAuthentication();
+        window.location.replace("/auth/login?reason=password-changed");
       }
     } catch (error: any) {
       setMsg(error.message);
@@ -1299,6 +1425,12 @@ function Auth() {
           "session-expired" && (
           <div role="alert" className="session-message">
             Your session has expired. Please log in again.
+          </div>
+        )}
+        {new URLSearchParams(loc.search).get("reason") ===
+          "password-changed" && (
+          <div role="status" className="session-message">
+            Password changed successfully. Sign in with your new password.
           </div>
         )}
         <span className="eyebrow">SECURE ACCESS</span>
@@ -1430,7 +1562,11 @@ function Auth() {
             data-testid={mode === "login" ? "login-submit" : "auth-submit"}
             disabled={submitting}
           >
-            {submitting ? "Signing in…" : title[mode] || "Submit"}
+            {submitting
+              ? mode === "login"
+                ? "Signing in…"
+                : "Submitting…"
+              : title[mode] || "Submit"}
           </button>
           <output
             role="alert"
@@ -1440,7 +1576,10 @@ function Auth() {
           </output>
         </form>
         {mode === "login" && (
-          <section className="demo-accounts" aria-labelledby="demo-logins-title">
+          <section
+            className="demo-accounts"
+            aria-labelledby="demo-logins-title"
+          >
             <div className="demo-accounts__heading">
               <strong id="demo-logins-title">Demo logins</strong>
               <span>Click an account to fill the form</span>
@@ -1452,7 +1591,9 @@ function Auth() {
                   type="button"
                   className="demo-account"
                   data-testid={`demo-${account.email.split("@")[0]}`}
-                  onClick={() => fillDemoAccount(account.email, account.password)}
+                  onClick={() =>
+                    fillDemoAccount(account.email, account.password)
+                  }
                 >
                   <span>
                     <strong>{account.role}</strong>
@@ -2255,7 +2396,7 @@ function Errors() {
 }
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Admin() {
-  const u = JSON.parse(localStorage.getItem("user") || "null");
+  const u = readStoredUser();
   if (u?.role !== "ADMIN")
     return (
       <>
@@ -2298,16 +2439,36 @@ function TestControl() {
       api(`/api/test/${name}`, { method: "POST", body: JSON.stringify(body) })
         .then((x) => setState(JSON.stringify(x)))
         .catch((e) => setState(e.message));
+  const clearBrowserState = () => {
+    const authentication = ["token", "refreshToken", "user"].map(
+      (key) => [key, localStorage.getItem(key)] as const,
+    );
+    localStorage.clear();
+    for (const [key, value] of authentication)
+      if (value !== null) localStorage.setItem(key, value);
+    sessionStorage.clear();
+    setState("Browser storage cleared; authentication preserved");
+  };
   return (
     <>
-      <h2>Test Control Center</h2>
+      <h1>Test Control Center</h1>
       <div className="panel actions">
         <button onClick={() => act("reset")}>Reset database</button>
         <button onClick={() => act("seed")}>Seed database</button>
         <button onClick={() => act("clock", { at: "2026-01-15T12:00:00Z" })}>
           Freeze clock
         </button>
-        <button onClick={() => act("network", { delay: 1000, failureRate: 0 })}>
+        <button
+          onClick={() =>
+            act("network", {
+              delay: 1000,
+              failureRate: 0,
+              offline: false,
+              statusCode: null,
+              rateLimit: 10,
+            })
+          }
+        >
           Configure network
         </button>
         <button
@@ -2317,15 +2478,7 @@ function TestControl() {
         >
           Trigger WebSocket
         </button>
-        <button
-          onClick={() => {
-            localStorage.clear();
-            sessionStorage.clear();
-            setState("Browser storage cleared");
-          }}
-        >
-          Clear browser state
-        </button>
+        <button onClick={clearBrowserState}>Clear browser state</button>
       </div>
       <pre role="status">{state}</pre>
       <Info

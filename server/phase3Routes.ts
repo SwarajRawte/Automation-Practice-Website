@@ -5,6 +5,49 @@ import { db } from "./db.js";
 import { roles } from "./auth.js";
 import type { AuthRequest } from "./types.js";
 export const phase3Router = Router();
+const positiveInteger = (value: unknown, fallback: number, maximum: number) => {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0
+      ? Math.min(parsed, maximum)
+      : fallback;
+  },
+  finiteNumber = (value: unknown) => {
+    if (
+      (typeof value !== "number" && typeof value !== "string") ||
+      (typeof value === "string" && !value.trim())
+    )
+      return Number.NaN;
+    return Number(value);
+  },
+  productValues = (body: unknown) => {
+    const input =
+        typeof body === "object" && body !== null && !Array.isArray(body)
+          ? (body as Record<string, unknown>)
+          : {},
+      name = typeof input.name === "string" ? input.name.trim() : "",
+      category =
+        typeof input.category === "string" ? input.category.trim() : "",
+      price = finiteNumber(input.price),
+      inventory = finiteNumber(input.inventory),
+      status =
+        typeof input.status === "string" && input.status.trim()
+          ? input.status.trim()
+          : "ACTIVE";
+    return {
+      valid:
+        Boolean(name) &&
+        Boolean(category) &&
+        Number.isFinite(price) &&
+        price >= 0 &&
+        Number.isInteger(inventory) &&
+        inventory >= 0,
+      name,
+      category,
+      price,
+      inventory,
+      status,
+    };
+  };
 const imageUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5_000_000 },
@@ -22,8 +65,8 @@ const tableUsers = Array.from({ length: 100 }, (_, index) => {
   };
 });
 phase3Router.get("/table-users", (req, res) => {
-  const page = Math.max(1, Number(req.query.page) || 1),
-    size = Math.min(100, Math.max(1, Number(req.query.size) || 10)),
+  const page = positiveInteger(req.query.page, 1, 1_000_000),
+    size = positiveInteger(req.query.size, 10, 100),
     search = String(req.query.search || "").toLowerCase(),
     status = String(req.query.status || ""),
     department = String(req.query.department || ""),
@@ -82,8 +125,8 @@ const history = (id: number, action: string, snapshot: unknown) =>
     )
     .run(id, action, JSON.stringify(snapshot), new Date().toISOString());
 phase3Router.get("/products", (req, res) => {
-  const page = Math.max(1, Number(req.query.page) || 1),
-    size = Math.min(100, Number(req.query.size) || 10),
+  const page = positiveInteger(req.query.page, 1, 1_000_000),
+    size = positiveInteger(req.query.size, 10, 100),
     search = `%${String(req.query.q || "")}%`,
     category = String(req.query.category || ""),
     status = String(req.query.status || ""),
@@ -123,10 +166,11 @@ phase3Router.get("/products/:id", (req, res) => {
     : res.status(404).json({ error: "Product not found" });
 });
 phase3Router.post("/products", roles("ADMIN"), (req: AuthRequest, res) => {
-  const { name, category, price, inventory, status = "ACTIVE" } = req.body;
-  if (!name || !category || Number(price) < 0 || Number(inventory) < 0)
+  const values = productValues(req.body);
+  if (!values.valid)
     return res.status(422).json({
-      error: "Name, category, non-negative price and inventory are required",
+      error:
+        "Name, category, a non-negative price, and a non-negative integer inventory are required",
     });
   try {
     const result = db
@@ -134,11 +178,11 @@ phase3Router.post("/products", roles("ADMIN"), (req: AuthRequest, res) => {
           "INSERT INTO products(name,category,price,inventory,status,version,updated_at) VALUES(?,?,?,?,?,1,?)",
         )
         .run(
-          name,
-          category,
-          Number(price),
-          Number(inventory),
-          Number(inventory) === 0 ? "OUT_OF_STOCK" : status,
+          values.name,
+          values.category,
+          values.price,
+          values.inventory,
+          values.inventory === 0 ? "OUT_OF_STOCK" : values.status,
           new Date().toISOString(),
         ),
       product = productById(Number(result.lastInsertRowid));
@@ -151,27 +195,28 @@ phase3Router.post("/products", roles("ADMIN"), (req: AuthRequest, res) => {
 phase3Router.put("/products/:id", roles("ADMIN"), (req, res) => {
   const current = productById(String(req.params.id));
   if (!current) return res.status(404).json({ error: "Product not found" });
-  if (Number(req.body.version) !== Number(current.version))
+  const body =
+      typeof req.body === "object" && req.body !== null && !Array.isArray(req.body)
+        ? (req.body as Record<string, unknown>)
+        : {},
+    values = productValues(body);
+  if (Number(body.version) !== Number(current.version))
     return res
       .status(409)
       .json({ error: "Concurrent update conflict", current });
-  if (
-    !req.body.name ||
-    Number(req.body.price) < 0 ||
-    Number(req.body.inventory) < 0
-  )
+  if (!values.valid)
     return res.status(422).json({ error: "Invalid product values" });
   try {
     db.prepare(
       "UPDATE products SET name=?,category=?,price=?,inventory=?,status=?,version=version+1,updated_at=? WHERE id=?",
     ).run(
-      req.body.name,
-      req.body.category,
-      Number(req.body.price),
-      Number(req.body.inventory),
-      Number(req.body.inventory) === 0
+      values.name,
+      values.category,
+      values.price,
+      values.inventory,
+      values.inventory === 0
         ? "OUT_OF_STOCK"
-        : req.body.status || "ACTIVE",
+        : values.status,
       new Date().toISOString(),
       current.id,
     );
@@ -220,8 +265,14 @@ phase3Router.delete("/products/:id", roles("ADMIN"), (req, res) => {
 phase3Router.post("/products/:id/undo", roles("ADMIN"), (req, res) => {
   if (req.body.undoToken !== `UNDO-PRODUCT-${req.params.id}`)
     return res.status(400).json({ error: "Invalid undo token" });
+  const deleted = db
+    .prepare("SELECT * FROM products WHERE id=?")
+    .get(String(req.params.id)) as any;
+  if (!deleted) return res.status(404).json({ error: "Product not found" });
+  if (!deleted.deleted_at)
+    return res.status(409).json({ error: "Product is not deleted" });
   db.prepare(
-    "UPDATE products SET deleted_at=NULL,version=version+1,updated_at=? WHERE id=?",
+    "UPDATE products SET deleted_at=NULL,version=version+1,updated_at=? WHERE id=? AND deleted_at IS NOT NULL",
   ).run(new Date().toISOString(), String(req.params.id));
   const product = productById(String(req.params.id));
   if (!product) return res.status(404).json({ error: "Product not found" });
@@ -290,11 +341,16 @@ const upload = multer({
     "image/png",
     "image/jpeg",
   ]);
-phase3Router.post("/files/upload", upload.array("files", 5), (req, res) => {
+phase3Router.post("/files/upload", upload.array("files", 5), (req, res, next) => {
   if (req.query.fail === "true")
     return res.status(503).json({ error: "Simulated upload failure" });
-  const files = req.files as Express.Multer.File[],
-    results = [];
+  const files = Array.isArray(req.files)
+    ? (req.files as Express.Multer.File[])
+    : [];
+  if (!files.length)
+    return res.status(422).json({ error: "At least one file is required" });
+  const prepared: Array<{ file: Express.Multer.File; digest: string }> = [],
+    batchDigests = new Set<string>();
   for (const file of files) {
     if (file.size === 0)
       return res
@@ -308,29 +364,44 @@ phase3Router.post("/files/upload", upload.array("files", 5), (req, res) => {
       .createHash("sha256")
       .update(file.buffer)
       .digest("hex");
-    if (db.prepare("SELECT id FROM uploaded_files WHERE sha256=?").get(digest))
+    if (
+      batchDigests.has(digest) ||
+      db.prepare("SELECT id FROM uploaded_files WHERE sha256=?").get(digest)
+    )
       return res
         .status(409)
         .json({ error: `Duplicate file: ${file.originalname}` });
-    const result = db
-      .prepare(
-        "INSERT INTO uploaded_files(name,size,mime_type,sha256,data,created_at) VALUES(?,?,?,?,?,?)",
-      )
-      .run(
-        file.originalname,
-        file.size,
-        file.mimetype,
-        digest,
-        file.buffer,
-        new Date().toISOString(),
-      );
-    results.push({
-      id: Number(result.lastInsertRowid),
-      name: file.originalname,
-      size: file.size,
-      type: file.mimetype,
-      preview: file.mimetype.startsWith("image/"),
-    });
+    batchDigests.add(digest);
+    prepared.push({ file, digest });
+  }
+  const results = [];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const { file, digest } of prepared) {
+      const result = db
+        .prepare(
+          "INSERT INTO uploaded_files(name,size,mime_type,sha256,data,created_at) VALUES(?,?,?,?,?,?)",
+        )
+        .run(
+          file.originalname,
+          file.size,
+          file.mimetype,
+          digest,
+          file.buffer,
+          new Date().toISOString(),
+        );
+      results.push({
+        id: Number(result.lastInsertRowid),
+        name: file.originalname,
+        size: file.size,
+        type: file.mimetype,
+        preview: file.mimetype.startsWith("image/"),
+      });
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    return next(error);
   }
   res.status(201).json({ files: results });
 });

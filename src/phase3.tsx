@@ -47,6 +47,7 @@ export function Phase3Tables() {
     isStatic = loc.pathname.endsWith("/static"),
     [rows, setRows] = useState<Row[]>([]),
     [search, setSearch] = useState(""),
+    [appliedSearch, setAppliedSearch] = useState(""),
     [status, setStatus] = useState(""),
     [page, setPage] = useState(1),
     [size, setSize] = useState(10),
@@ -68,48 +69,111 @@ export function Phase3Tables() {
       "status",
       "score",
     ]),
-    [visibleCount, setVisibleCount] = useState(25);
+    [visibleCount, setVisibleCount] = useState(25),
+    loadRequest = useRef(0),
+    nextLocalId = useRef(1000);
   const load = async () => {
+    const request = ++loadRequest.current;
     setLoading(true);
-    const result = await api(
-      `/api/table-users?page=${page}&size=${virtual ? 100 : size}&search=${encodeURIComponent(search)}&status=${status}&sort=${sort}&direction=${direction}&sorts=${sort}:${direction}${secondarySort ? `,${secondarySort}:asc` : ""}`,
-    );
-    setRows(result.data);
-    setTotal(result.total);
-    setLoading(false);
+    try {
+      const result = await api(
+        `/api/table-users?page=${page}&size=${virtual ? 100 : size}&search=${encodeURIComponent(appliedSearch)}&status=${encodeURIComponent(status)}&sort=${sort}&direction=${direction}&sorts=${sort}:${direction}${secondarySort ? `,${secondarySort}:asc` : ""}`,
+      );
+      if (request !== loadRequest.current) return;
+      setRows(result.data);
+      setTotal(result.total);
+      setSelected([]);
+      setExpanded(null);
+      if (virtual) setVisibleCount(Math.min(25, result.data.length));
+    } catch (error) {
+      if (request !== loadRequest.current) return;
+      setRows([]);
+      setTotal(0);
+      setMessage(
+        error instanceof Error ? error.message : "Unable to load table data",
+      );
+    } finally {
+      if (request === loadRequest.current) setLoading(false);
+    }
   };
   useEffect(() => {
     if (isStatic) {
-      setRows(
-        Array.from({ length: 10 }, (_, i) => ({
-          id: i + 1,
-          name: `Static User ${String(i + 1).padStart(2, "0")}`,
-          email: `static${i + 1}@testlab.local`,
-          department: "Quality",
-          role: "USER",
-          status: "ACTIVE",
-          score: 80 + i,
-        })),
-      );
+      loadRequest.current += 1;
+      const staticRows = Array.from({ length: 10 }, (_, i) => ({
+        id: i + 1,
+        name: `Static User ${String(i + 1).padStart(2, "0")}`,
+        email: `static${i + 1}@testlab.local`,
+        department: "Quality",
+        role: "USER",
+        status: "ACTIVE",
+        score: 80 + i,
+      }))
+        .filter(
+          (row) =>
+            (!appliedSearch ||
+              Object.values(row).some((value) =>
+                String(value)
+                  .toLowerCase()
+                  .includes(appliedSearch.toLowerCase()),
+              )) &&
+            (!status || row.status === status),
+        )
+        .sort((a, b) => {
+          const comparison = String(a[sort as keyof Row]).localeCompare(
+            String(b[sort as keyof Row]),
+            undefined,
+            { numeric: true },
+          );
+          if (comparison)
+            return direction === "desc" ? -comparison : comparison;
+          return secondarySort
+            ? String(a[secondarySort as keyof Row]).localeCompare(
+                String(b[secondarySort as keyof Row]),
+                undefined,
+                { numeric: true },
+              )
+            : 0;
+        });
+      setTotal(staticRows.length);
+      setRows(staticRows.slice((page - 1) * size, page * size));
+      setSelected([]);
+      setExpanded(null);
       setLoading(false);
     } else void load();
-  }, [page, size, sort, direction, secondarySort, status, isStatic, virtual]);
+  }, [
+    page,
+    size,
+    sort,
+    direction,
+    secondarySort,
+    status,
+    appliedSearch,
+    isStatic,
+    virtual,
+  ]);
   const toggleSort = (column: string, multi = false) => {
+      setPage(1);
       if (multi && column !== sort) {
-        setSecondarySort(secondarySort === column ? "" : column);
+        setSecondarySort((current) => (current === column ? "" : column));
         return;
       }
       setSecondarySort("");
-      if (sort === column) setDirection(direction === "asc" ? "desc" : "asc");
+      if (sort === column)
+        setDirection((current) => (current === "asc" ? "desc" : "asc"));
       else {
         setSort(column);
         setDirection("asc");
       }
     },
     update = (id: number, key: keyof Row, value: string) =>
-      setRows(
-        rows.map((row) => (row.id === id ? { ...row, [key]: value } : row)),
+      setRows((current) =>
+        current.map((row) => (row.id === id ? { ...row, [key]: value } : row)),
       );
+  const applySearch = () => {
+    setPage(1);
+    if (!isStatic && appliedSearch === search && page === 1) void load();
+    else setAppliedSearch(search);
+  };
   if (virtual)
     return (
       <>
@@ -173,7 +237,7 @@ export function Phase3Tables() {
             aria-label="Global search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && load()}
+            onKeyDown={(e) => e.key === "Enter" && applySearch()}
           />
         </label>
         <label>
@@ -194,14 +258,17 @@ export function Phase3Tables() {
           Page size
           <select
             value={size}
-            onChange={(e) => setSize(Number(e.target.value))}
+            onChange={(e) => {
+              setSize(Number(e.target.value));
+              setPage(1);
+            }}
           >
             {[5, 10, 20, 50].map((x) => (
               <option key={x}>{x}</option>
             ))}
           </select>
         </label>
-        <button onClick={load}>Apply search</button>
+        <button onClick={applySearch}>Apply search</button>
         <button
           className="secondary"
           onClick={() => setColumns([...columns].reverse())}
@@ -210,10 +277,10 @@ export function Phase3Tables() {
         </button>
         <button
           onClick={() => {
-            setRows([
-              ...rows,
+            setRows((current) => [
+              ...current,
               {
-                id: 1000 + rows.length,
+                id: ++nextLocalId.current,
                 name: "New Local User",
                 email: "new@testlab.local",
                 department: "Quality",
@@ -222,6 +289,7 @@ export function Phase3Tables() {
                 score: 75,
               },
             ]);
+            setTotal((current) => current + 1);
             setMessage("Row added locally");
           }}
         >
@@ -230,7 +298,10 @@ export function Phase3Tables() {
         <button
           disabled={!selected.length}
           onClick={() => {
-            setRows(rows.filter((row) => !selected.includes(row.id)));
+            setRows((current) =>
+              current.filter((row) => !selected.includes(row.id)),
+            );
+            setTotal((current) => Math.max(0, current - selected.length));
             setMessage(`${selected.length} rows removed`);
             setSelected([]);
           }}
@@ -246,10 +317,10 @@ export function Phase3Tables() {
               type="checkbox"
               checked={!hidden.includes(column)}
               onChange={() =>
-                setHidden(
-                  hidden.includes(column)
-                    ? hidden.filter((x) => x !== column)
-                    : [...hidden, column],
+                setHidden((current) =>
+                  current.includes(column)
+                    ? current.filter((x) => x !== column)
+                    : [...current, column],
                 )
               }
             />
@@ -275,7 +346,10 @@ export function Phase3Tables() {
                   <input
                     aria-label="Select all rows"
                     type="checkbox"
-                    checked={selected.length === rows.length && rows.length > 0}
+                    checked={
+                      rows.length > 0 &&
+                      rows.every((row) => selected.includes(row.id))
+                    }
                     onChange={(e) =>
                       setSelected(e.target.checked ? rows.map((x) => x.id) : [])
                     }
@@ -285,19 +359,25 @@ export function Phase3Tables() {
                   .filter((c) => !hidden.includes(c))
                   .map((column) => (
                     <th key={column}>
-                      <button
-                        className="table-sort"
-                        onClick={(event) => toggleSort(column, event.shiftKey)}
-                      >
-                        {column}{" "}
-                        {sort === column
-                          ? direction === "asc"
-                            ? "▲"
-                            : "▼"
-                          : secondarySort === column
-                            ? "△²"
-                            : ""}
-                      </button>
+                      {isStatic || column !== "role" ? (
+                        <button
+                          className="table-sort"
+                          onClick={(event) =>
+                            toggleSort(column, event.shiftKey)
+                          }
+                        >
+                          {column}{" "}
+                          {sort === column
+                            ? direction === "asc"
+                              ? "▲"
+                              : "▼"
+                            : secondarySort === column
+                              ? "△²"
+                              : ""}
+                        </button>
+                      ) : (
+                        column
+                      )}
                     </th>
                   ))}
                 <th>Actions</th>
@@ -313,10 +393,10 @@ export function Phase3Tables() {
                         type="checkbox"
                         checked={selected.includes(row.id)}
                         onChange={() =>
-                          setSelected(
-                            selected.includes(row.id)
-                              ? selected.filter((x) => x !== row.id)
-                              : [...selected, row.id],
+                          setSelected((current) =>
+                            current.includes(row.id)
+                              ? current.filter((x) => x !== row.id)
+                              : [...current, row.id],
                           )
                         }
                       />
@@ -352,9 +432,16 @@ export function Phase3Tables() {
                       </button>
                       <button
                         className="danger"
-                        onClick={() =>
-                          setRows(rows.filter((x) => x.id !== row.id))
-                        }
+                        onClick={() => {
+                          setRows((current) =>
+                            current.filter((x) => x.id !== row.id),
+                          );
+                          setSelected((current) =>
+                            current.filter((id) => id !== row.id),
+                          );
+                          setTotal((current) => Math.max(0, current - 1));
+                          if (expanded === row.id) setExpanded(null);
+                        }}
                       >
                         Delete
                       </button>
@@ -362,7 +449,12 @@ export function Phase3Tables() {
                   </tr>
                   {expanded === row.id && (
                     <tr>
-                      <td colSpan={columns.length + 2}>
+                      <td
+                        colSpan={
+                          columns.filter((column) => !hidden.includes(column))
+                            .length + 2
+                        }
+                      >
                         <strong>Expanded row {row.id}</strong>
                         <pre>{JSON.stringify(row, null, 2)}</pre>
                       </td>
@@ -408,11 +500,30 @@ type Product = {
   version: number;
   updated_at: string;
 };
+type ProductForm = Pick<
+  Product,
+  "name" | "category" | "price" | "inventory" | "status"
+>;
+const defaultProductForm = (): ProductForm => ({
+  name: "Automation Product",
+  category: "Hardware",
+  price: 49.99,
+  inventory: 10,
+  status: "ACTIVE",
+});
+const storedUserIsAdmin = () => {
+  try {
+    const user = JSON.parse(localStorage.getItem("user") || "null");
+    return user?.role === "ADMIN";
+  } catch {
+    return false;
+  }
+};
 export function Phase3Products() {
-  const user = JSON.parse(localStorage.getItem("user") || "null"),
-    admin = user?.role === "ADMIN",
+  const admin = storedUserIsAdmin(),
     [products, setProducts] = useState<Product[]>([]),
     [query, setQuery] = useState(""),
+    [appliedQuery, setAppliedQuery] = useState(""),
     [category, setCategory] = useState(""),
     [sort, setSort] = useState("id"),
     [page, setPage] = useState(1),
@@ -420,29 +531,52 @@ export function Phase3Products() {
     [editing, setEditing] = useState<Product | null>(null),
     [history, setHistory] = useState<any[]>([]),
     [message, setMessage] = useState(""),
+    [loading, setLoading] = useState(true),
     [undo, setUndo] = useState<{ id: number; token: string } | null>(null),
     [image, setImage] = useState<File | null>(null),
-    [form, setForm] = useState({
-      name: "Automation Product",
-      category: "Hardware",
-      price: 49.99,
-      inventory: 10,
-      status: "ACTIVE",
-    });
+    [form, setForm] = useState<ProductForm>(defaultProductForm),
+    loadRequest = useRef(0),
+    imageInput = useRef<HTMLInputElement | null>(null);
   const load = async () => {
-    const result = await api(
-      `/api/products?page=${page}&size=8&q=${encodeURIComponent(query)}&category=${category}&sort=${sort}`,
-    );
-    setProducts(result.data);
-    setTotal(result.total);
+    const request = ++loadRequest.current;
+    setLoading(true);
+    try {
+      const result = await api(
+        `/api/products?page=${page}&size=8&q=${encodeURIComponent(appliedQuery)}&category=${encodeURIComponent(category)}&sort=${sort}`,
+      );
+      if (request !== loadRequest.current) return;
+      setProducts(result.data);
+      setTotal(result.total);
+    } catch (error) {
+      if (request !== loadRequest.current) return;
+      setProducts([]);
+      setTotal(0);
+      setMessage(
+        error instanceof Error ? error.message : "Unable to load products",
+      );
+    } finally {
+      if (request === loadRequest.current) setLoading(false);
+    }
   };
   useEffect(() => {
     void load();
-  }, [page, category, sort]);
+  }, [page, category, sort, appliedQuery]);
+  const resetEditor = () => {
+    setEditing(null);
+    setForm(defaultProductForm());
+    setImage(null);
+    if (imageInput.current) imageInput.current.value = "";
+  };
+  const applySearch = () => {
+    setPage(1);
+    if (appliedQuery === query && page === 1) void load();
+    else setAppliedQuery(query);
+  };
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
+    let result: Product;
     try {
-      const result = editing
+      result = editing
         ? await api(`/api/products/${editing.id}`, {
             method: "PUT",
             body: JSON.stringify({ ...form, version: editing.version }),
@@ -451,28 +585,31 @@ export function Phase3Products() {
             method: "POST",
             body: JSON.stringify(form),
           });
-      if (image) {
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Save failed");
+      return;
+    }
+    let imageError = "";
+    if (image) {
+      try {
         const data = new FormData();
         data.append("image", image);
         await api(`/api/products/${result.id}/image`, {
           method: "POST",
           body: data,
         });
-        setImage(null);
+      } catch (error) {
+        imageError =
+          error instanceof Error ? error.message : "Image upload failed";
       }
-      setMessage(`${result.name} saved`);
-      setEditing(null);
-      setForm({
-        name: "Automation Product",
-        category: "Hardware",
-        price: 49.99,
-        inventory: 10,
-        status: "ACTIVE",
-      });
-      await load();
-    } catch (error: any) {
-      setMessage(error.message);
     }
+    resetEditor();
+    setMessage(
+      imageError
+        ? `${result.name} saved, but its image failed: ${imageError}`
+        : `${result.name} saved`,
+    );
+    await load();
   };
   const edit = (p: Product) => {
     setEditing(p);
@@ -483,26 +620,54 @@ export function Phase3Products() {
       inventory: p.inventory,
       status: p.status,
     });
+    setImage(null);
+    if (imageInput.current) imageInput.current.value = "";
   };
   const remove = async (p: Product) => {
     if (!window.confirm(`Delete ${p.name}?`)) return;
-    const result = await api(`/api/products/${p.id}`, { method: "DELETE" });
-    setUndo({ id: p.id, token: result.undoToken });
-    setMessage(`${p.name} deleted — undo available`);
-    await load();
+    try {
+      const result = await api(`/api/products/${p.id}`, { method: "DELETE" });
+      setUndo({ id: p.id, token: result.undoToken });
+      setMessage(`${p.name} deleted — undo available`);
+      if (products.length === 1 && page > 1) setPage((value) => value - 1);
+      else await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Delete failed");
+    }
   };
   const restore = async () => {
     if (!undo) return;
-    await api(`/api/products/${undo.id}/undo`, {
-      method: "POST",
-      body: JSON.stringify({ undoToken: undo.token }),
-    });
-    setUndo(null);
-    setMessage("Deletion undone");
-    await load();
+    try {
+      await api(`/api/products/${undo.id}/undo`, {
+        method: "POST",
+        body: JSON.stringify({ undoToken: undo.token }),
+      });
+      setUndo(null);
+      setMessage("Deletion undone");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Undo failed");
+    }
   };
-  const showHistory = async (id: number) =>
-    setHistory((await api(`/api/products/${id}/history`)).data);
+  const duplicate = async (product: Product) => {
+    try {
+      await api(`/api/products/${product.id}/duplicate`, {
+        method: "POST",
+        body: "{}",
+      });
+      setMessage("Product duplicated");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Duplicate failed");
+    }
+  };
+  const showHistory = async (id: number) => {
+    try {
+      setHistory((await api(`/api/products/${id}/history`)).data);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "History failed");
+    }
+  };
   return (
     <>
       <PageHeader
@@ -519,21 +684,18 @@ export function Phase3Products() {
             aria-label="Search products"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && applySearch()}
           />
         </label>
-        <button
-          onClick={() => {
-            setPage(1);
-            void load();
-          }}
-        >
-          Search
-        </button>
+        <button onClick={applySearch}>Search</button>
         <label>
           Category
           <select
             value={category}
-            onChange={(e) => setCategory(e.target.value)}
+            onChange={(e) => {
+              setCategory(e.target.value);
+              setPage(1);
+            }}
           >
             <option value="">All</option>
             <option>Hardware</option>
@@ -543,7 +705,13 @@ export function Phase3Products() {
         </label>
         <label>
           Sort
-          <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          <select
+            value={sort}
+            onChange={(e) => {
+              setSort(e.target.value);
+              setPage(1);
+            }}
+          >
             <option value="id">ID</option>
             <option value="name">Name</option>
             <option value="price">Price</option>
@@ -582,6 +750,7 @@ export function Phase3Products() {
               type="number"
               min="0"
               step="0.01"
+              required
               value={form.price}
               onChange={(e) =>
                 setForm({ ...form, price: Number(e.target.value) })
@@ -593,6 +762,7 @@ export function Phase3Products() {
             <input
               type="number"
               min="0"
+              required
               value={form.inventory}
               onChange={(e) =>
                 setForm({ ...form, inventory: Number(e.target.value) })
@@ -608,11 +778,13 @@ export function Phase3Products() {
               <option>ACTIVE</option>
               <option>DRAFT</option>
               <option>INACTIVE</option>
+              <option>OUT_OF_STOCK</option>
             </select>
           </label>
           <label>
             Product image
             <input
+              ref={imageInput}
               type="file"
               accept="image/png,image/jpeg"
               onChange={(event) => setImage(event.target.files?.[0] || null)}
@@ -621,11 +793,7 @@ export function Phase3Products() {
           <div className="wide">
             <button>{editing ? "Update" : "Create"}</button>
             {editing && (
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setEditing(null)}
-              >
+              <button type="button" className="secondary" onClick={resetEditor}>
                 Cancel
               </button>
             )}
@@ -638,52 +806,49 @@ export function Phase3Products() {
       )}
       <output role="status">{message}</output>
       {undo && <button onClick={restore}>Undo deletion</button>}
-      <div className="cards">
-        {products.map((product) => (
-          <article
-            className="card"
-            key={product.id}
-            data-testid={`product-${product.id}`}
-          >
-            <b>{product.name}</b>
-            <span>
-              {product.category} · {product.status}
-            </span>
-            <strong>${product.price.toFixed(2)}</strong>
-            <small>
-              Stock {product.inventory} · v{product.version}
-            </small>
-            <div className="actions">
-              {admin && (
-                <>
-                  <button onClick={() => edit(product)}>Edit</button>
-                  <button
-                    onClick={async () => {
-                      await api(`/api/products/${product.id}/duplicate`, {
-                        method: "POST",
-                        body: "{}",
-                      });
-                      setMessage("Product duplicated");
-                      await load();
-                    }}
-                  >
-                    Duplicate
-                  </button>
-                  <button className="danger" onClick={() => remove(product)}>
-                    Delete
-                  </button>
-                </>
-              )}
-              <button
-                className="secondary"
-                onClick={() => showHistory(product.id)}
-              >
-                History
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
+      {loading ? (
+        <p role="status">Loading products…</p>
+      ) : products.length === 0 ? (
+        <p className="empty-state">No matching products</p>
+      ) : (
+        <div className="cards">
+          {products.map((product) => (
+            <article
+              className="card"
+              key={product.id}
+              data-testid={`product-${product.id}`}
+            >
+              <b>{product.name}</b>
+              <span>
+                {product.category} · {product.status}
+              </span>
+              <strong>${product.price.toFixed(2)}</strong>
+              <small>
+                Stock {product.inventory} · v{product.version}
+              </small>
+              <div className="actions">
+                {admin && (
+                  <>
+                    <button onClick={() => edit(product)}>Edit</button>
+                    <button onClick={() => duplicate(product)}>
+                      Duplicate
+                    </button>
+                    <button className="danger" onClick={() => remove(product)}>
+                      Delete
+                    </button>
+                  </>
+                )}
+                <button
+                  className="secondary"
+                  onClick={() => showHistory(product.id)}
+                >
+                  History
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
       <div className="pagination">
         <button disabled={page === 1} onClick={() => setPage(page - 1)}>
           Previous
@@ -719,6 +884,20 @@ type Uploaded = {
   type: string;
   preview?: boolean;
 };
+const waitForUploadStart = (signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    let timer = 0;
+    const abort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Upload cancelled", "AbortError"));
+    };
+    if (signal.aborted) return abort();
+    signal.addEventListener("abort", abort, { once: true });
+    timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, 300);
+  });
 export function Phase3Files() {
   const loc = useLocation(),
     downloadPage = loc.pathname.endsWith("/download"),
@@ -726,40 +905,92 @@ export function Phase3Files() {
     [selected, setSelected] = useState<File[]>([]),
     [progress, setProgress] = useState(0),
     [message, setMessage] = useState(""),
-    controller = useRef<AbortController | null>(null);
-  const refresh = () => api("/api/files").then((x) => setFiles(x.data));
+    [uploading, setUploading] = useState(false),
+    [cancellable, setCancellable] = useState(false),
+    controller = useRef<AbortController | null>(null),
+    fileInput = useRef<HTMLInputElement | null>(null);
+  const refresh = async () => {
+    try {
+      setFiles((await api("/api/files")).data);
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Unable to load files",
+      );
+    }
+  };
   useEffect(() => {
-    void refresh();
-  }, []);
-  const choose = (list: FileList | null) =>
+    if (!downloadPage) void refresh();
+  }, [downloadPage]);
+  useEffect(() => () => controller.current?.abort(), []);
+  const choose = (list: FileList | null) => {
     setSelected(list ? Array.from(list) : []);
+    setProgress(0);
+    setMessage("");
+  };
   const upload = async (fail = false) => {
     if (!selected.length) return setMessage("Choose at least one file");
-    controller.current = new AbortController();
+    if (uploading) return;
+    const activeController = new AbortController();
+    controller.current = activeController;
+    setUploading(true);
+    setCancellable(true);
     setProgress(15);
     const timer = setInterval(
       () => setProgress((value) => Math.min(90, value + 15)),
       120,
     );
     try {
+      await waitForUploadStart(activeController.signal);
       const data = new FormData();
       selected.forEach((file) => data.append("files", file));
       const result = await api(`/api/files/upload${fail ? "?fail=true" : ""}`, {
         method: "POST",
         body: data,
-        signal: controller.current.signal,
+        signal: activeController.signal,
       });
       setProgress(100);
       setMessage(`${result.files.length} file(s) uploaded`);
       setSelected([]);
+      if (fileInput.current) fileInput.current.value = "";
       await refresh();
-    } catch (error: any) {
+    } catch (error) {
+      const failure = error as Error;
       setMessage(
-        error.name === "AbortError" ? "Upload cancelled" : error.message,
+        failure.name === "AbortError"
+          ? "Upload cancelled"
+          : failure.message || "Upload failed",
       );
       setProgress(0);
     } finally {
       clearInterval(timer);
+      if (controller.current === activeController) controller.current = null;
+      setCancellable(false);
+      setUploading(false);
+    }
+  };
+  const processCsv = async () => {
+    const csv = selected.find(
+      (file) => file.type === "text/csv" || file.name.endsWith(".csv"),
+    );
+    if (!csv) return setMessage("Choose a CSV file to process");
+    if (uploading) return;
+    setUploading(true);
+    try {
+      const data = new FormData();
+      data.append("file", csv);
+      const result = await api("/api/files/process-csv", {
+        method: "POST",
+        body: data,
+      });
+      setMessage(
+        `CSV processed: ${result.rows} row(s), headers: ${result.headers.join(", ")}`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "CSV processing failed",
+      );
+    } finally {
+      setUploading(false);
     }
   };
   const download = async (type: string) => {
@@ -776,11 +1007,13 @@ export function Phase3Files() {
         response.headers
           .get("content-disposition")
           ?.match(/filename="?([^";]+).*$/)?.[1] || `download.${type}`;
+      document.body.appendChild(link);
       link.click();
-      URL.revokeObjectURL(url);
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
       setMessage(`${type} download started`);
-    } catch (error: any) {
-      setMessage(error.message);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Download failed");
     }
   };
   if (downloadPage)
@@ -822,8 +1055,10 @@ export function Phase3Files() {
         <label>
           Single or multiple files
           <input
+            ref={fileInput}
             type="file"
             multiple
+            disabled={uploading}
             onChange={(e) => choose(e.target.files)}
             accept=".txt,.csv,.pdf,.png,.jpg,.jpeg"
           />
@@ -833,14 +1068,16 @@ export function Phase3Files() {
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
+            if (uploading) return;
+            if (fileInput.current) fileInput.current.value = "";
             choose(e.dataTransfer.files);
           }}
         >
           Drag and drop files here
         </div>
         <ul>
-          {selected.map((file) => (
-            <li key={`${file.name}-${file.size}`}>
+          {selected.map((file, index) => (
+            <li key={`${file.name}-${file.size}-${file.lastModified}-${index}`}>
               {file.name} — {file.size} bytes
             </li>
           ))}
@@ -849,15 +1086,29 @@ export function Phase3Files() {
           {progress}%
         </progress>
         <div className="actions">
-          <button onClick={() => upload()}>Upload</button>
+          <button disabled={uploading} onClick={() => upload()}>
+            {uploading ? "Working…" : "Upload"}
+          </button>
           <button
             className="secondary"
+            disabled={!cancellable}
             onClick={() => controller.current?.abort()}
           >
             Cancel upload
           </button>
-          <button className="danger" onClick={() => upload(true)}>
+          <button
+            className="danger"
+            disabled={uploading}
+            onClick={() => upload(true)}
+          >
             Simulate failure
+          </button>
+          <button
+            className="secondary"
+            disabled={uploading}
+            onClick={processCsv}
+          >
+            Process selected CSV
           </button>
         </div>
       </div>
@@ -876,9 +1127,17 @@ export function Phase3Files() {
               <button
                 className="danger"
                 onClick={async () => {
-                  await api(`/api/files/${file.id}`, { method: "DELETE" });
-                  setMessage(`${file.name} removed`);
-                  await refresh();
+                  try {
+                    await api(`/api/files/${file.id}`, { method: "DELETE" });
+                    setMessage(`${file.name} removed`);
+                    await refresh();
+                  } catch (error) {
+                    setMessage(
+                      error instanceof Error
+                        ? error.message
+                        : "Unable to remove file",
+                    );
+                  }
                 }}
               >
                 Remove
@@ -897,8 +1156,12 @@ export function Phase3Files() {
 }
 
 export function Phase3Dynamic() {
-  const params = new URLSearchParams(location.search),
-    delay = Math.min(10000, Math.max(0, Number(params.get("delay") || 1500))),
+  const loc = useLocation(),
+    params = new URLSearchParams(loc.search),
+    requestedDelay = Number(params.get("delay") ?? 1500),
+    delay = Number.isFinite(requestedDelay)
+      ? Math.min(10000, Math.max(0, requestedDelay))
+      : 1500,
     deterministic = params.get("deterministic") !== "false",
     [visible, setVisible] = useState(false),
     [disappearing, setDisappearing] = useState(true),
@@ -911,6 +1174,13 @@ export function Phase3Dynamic() {
     [query, setQuery] = useState(""),
     [generation, setGeneration] = useState(1);
   useEffect(() => {
+    setVisible(false);
+    setDisappearing(true);
+    setText("Original text");
+    setEnabled(false);
+    setLoading(true);
+    setProgress(0);
+    setPoll("PENDING");
     const timers = [
       setTimeout(() => setVisible(true), delay),
       setTimeout(() => setDisappearing(false), delay),
@@ -920,7 +1190,15 @@ export function Phase3Dynamic() {
       setTimeout(() => setPoll("COMPLETE"), delay * 2),
     ];
     const interval = setInterval(
-      () => setProgress((value) => (value >= 100 ? 100 : value + 10)),
+      () => {
+        setProgress((value) => {
+          if (value >= 90) {
+            clearInterval(interval);
+            return 100;
+          }
+          return value + 10;
+        });
+      },
       Math.max(50, delay / 10),
     );
     return () => {
@@ -970,7 +1248,7 @@ export function Phase3Dynamic() {
           <h3>Loading states</h3>
           {loading ? (
             <>
-              <div className="spinner" />
+              <div className="spinner" role="status" aria-label="Loading" />
               <div className="skeleton">Skeleton loader</div>
             </>
           ) : (
@@ -1002,10 +1280,7 @@ export function Phase3Dynamic() {
           </p>
           <button
             onClick={() => {
-              setGeneration(generation + 1);
-              setVisible(false);
-              setLoading(true);
-              setProgress(0);
+              setGeneration((value) => value + 1);
             }}
           >
             Replace and remount
@@ -1029,7 +1304,7 @@ class Phase3Shadow extends HTMLElement {
     if (this.shadowRoot) return;
     const root = this.attachShadow({ mode: "open" });
     root.innerHTML =
-      '<style>section{border:2px solid #6552e8;padding:16px;border-radius:8px}button{padding:8px;background:#6552e8;color:white}</style><section><label>Shadow input <input id="shadow-input" aria-label="Shadow input"></label><select id="shadow-select"><option>Alpha</option><option>Bravo</option></select><button id="shadow-button">Shadow button</button><output id="shadow-output"></output><nested-shadow></nested-shadow></section>';
+      '<style>section{border:2px solid #6552e8;padding:16px;border-radius:8px}button{padding:8px;background:#6552e8;color:white}</style><section><label>Shadow input <input id="shadow-input" aria-label="Shadow input"></label><select id="shadow-select" aria-label="Shadow select"><option>Alpha</option><option>Bravo</option></select><button id="shadow-button">Shadow button</button><output id="shadow-output" aria-live="polite"></output><nested-shadow></nested-shadow></section>';
     root
       .querySelector("#shadow-button")!
       .addEventListener(
@@ -1045,7 +1320,15 @@ class NestedShadow extends HTMLElement {
     if (this.shadowRoot) return;
     const root = this.attachShadow({ mode: "open" });
     root.innerHTML =
-      '<div><strong id="nested-text">Nested open shadow root</strong><button id="nested-button">Nested action</button></div>';
+      '<div><strong id="nested-text">Nested open shadow root</strong><button id="nested-button">Nested action</button><output id="nested-output" aria-live="polite"></output></div>';
+    root
+      .querySelector("#nested-button")!
+      .addEventListener(
+        "click",
+        () =>
+          (root.querySelector("#nested-output")!.textContent =
+            "Nested action completed"),
+      );
   }
 }
 class ClosedShadow extends HTMLElement {
@@ -1085,7 +1368,7 @@ export function Phase3ShadowDom() {
             "data-testid": "dynamic-shadow-host",
           })}
       </div>
-      <button onClick={() => setDynamic(true)}>
+      <button disabled={dynamic} onClick={() => setDynamic(true)}>
         Create dynamic shadow root
       </button>
       <section className="panel">

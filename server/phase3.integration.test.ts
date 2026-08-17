@@ -38,8 +38,33 @@ test("table API is deterministic with server sorting filtering and pagination", 
     .expect(200);
   assert.equal(multi.body.data[0].department, "Engineering");
   assert.ok(multi.body.data[0].score >= multi.body.data[1].score);
+  const invalidPage = await request(app)
+    .get("/api/table-users?page=-4&size=-20")
+    .expect(200);
+  assert.equal(invalidPage.body.page, 1);
+  assert.equal(invalidPage.body.size, 10);
+  assert.equal(invalidPage.body.data.length, 10);
 });
 test("product CRUD supports validation conflict duplicate history delete and undo", async () => {
+  const invalidPage = await request(app)
+    .get("/api/products?page=-1&size=-50")
+    .expect(200);
+  assert.equal(invalidPage.body.page, 1);
+  assert.equal(invalidPage.body.size, 10);
+  assert.equal(invalidPage.body.data.length, 10);
+  await request(app)
+    .post("/api/products")
+    .send({ name: "Missing Price", category: "Hardware", inventory: 1 })
+    .expect(422);
+  await request(app)
+    .post("/api/products")
+    .send({
+      name: "Fractional Stock",
+      category: "Hardware",
+      price: 2,
+      inventory: 1.5,
+    })
+    .expect(422);
   const created = await request(app)
     .post("/api/products")
     .send({
@@ -50,6 +75,10 @@ test("product CRUD supports validation conflict duplicate history delete and und
       status: "ACTIVE",
     })
     .expect(201);
+  await request(app)
+    .post(`/api/products/${created.body.id}/undo`)
+    .send({ undoToken: `UNDO-PRODUCT-${created.body.id}` })
+    .expect(409);
   await request(app)
     .post("/api/products")
     .send({
@@ -99,6 +128,14 @@ test("viewer cannot mutate products", async () => {
     .expect(403);
 });
 test("files persist, reject duplicates, remove, process CSV, and download", async () => {
+  await request(app).post("/api/files/upload").expect(422);
+  await request(app)
+    .post("/api/files/upload")
+    .attach("files", Buffer.from("valid first file"), "first.txt")
+    .attach("files", Buffer.from("invalid second file"), "second.exe")
+    .expect(415);
+  const emptyList = await request(app).get("/api/files").expect(200);
+  assert.equal(emptyList.body.data.length, 0);
   const upload = await request(app)
     .post("/api/files/upload")
     .attach("files", Buffer.from("deterministic file"), "sample.txt")

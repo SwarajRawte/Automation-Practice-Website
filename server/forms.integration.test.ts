@@ -2,36 +2,11 @@ import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import request from "supertest";
-import { db, reset } from "./db.js";
+import { reset } from "./db.js";
+import { formsRouter } from "./formsRoutes.js";
 const app = express();
 app.use(express.json());
-app.post("/api/forms", (req, res) => {
-  const errors: Record<string, string> = {};
-  if (!req.body.name || String(req.body.name).length < 2)
-    errors.name = "Name must contain at least 2 characters";
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(req.body.email || "")))
-    errors.email = "A valid email is required";
-  if (req.body.password !== req.body.confirmPassword)
-    errors.confirmPassword = "Passwords must match";
-  if (Object.keys(errors).length)
-    return res.status(422).json({ error: "Form validation failed", errors });
-  const id = Number(
-    db
-      .prepare("INSERT INTO form_submissions(data,created_at) VALUES(?,?)")
-      .run(JSON.stringify(req.body), new Date().toISOString()).lastInsertRowid,
-  );
-  return res
-    .status(201)
-    .json({ id, data: req.body, message: "Form submitted successfully" });
-});
-app.get("/api/forms/:id", (req, res) => {
-  const row = db
-    .prepare("SELECT * FROM form_submissions WHERE id=?")
-    .get(String(req.params.id)) as any;
-  return row
-    ? res.json({ id: row.id, data: JSON.parse(row.data) })
-    : res.status(404).json({ error: "Form submission not found" });
-});
+app.use("/api", formsRouter);
 beforeEach(() => reset());
 test("valid form data persists and can be retrieved", async () => {
   const payload = {
@@ -60,7 +35,32 @@ test("server returns deterministic field validation errors", async () => {
     "confirmPassword",
     "email",
     "name",
+    "password",
   ]);
+});
+test("server rejects missing passwords and malformed numeric/date fields", async () => {
+  const missingPassword = await request(app)
+    .post("/api/forms")
+    .send({ name: "Valid Name", email: "valid@test.local" })
+    .expect(422);
+  assert.equal(
+    missingPassword.body.errors.password,
+    "Password must contain at least 8 characters",
+  );
+  const malformed = await request(app)
+    .post("/api/forms")
+    .send({
+      name: "Valid Name",
+      email: "valid@test.local",
+      password: "Strong123!",
+      confirmPassword: "Strong123!",
+      quantity: 0,
+      startDate: "2026-02-02",
+      endDate: "2026-02-01",
+    })
+    .expect(422);
+  assert.ok(malformed.body.errors.quantity);
+  assert.ok(malformed.body.errors.endDate);
 });
 test("unknown submission returns 404", async () => {
   await request(app).get("/api/forms/9999").expect(404);

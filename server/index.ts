@@ -2,78 +2,48 @@ import express from "express";
 import cors from "cors";
 import path from "node:path";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import multer from "multer";
 import swagger from "swagger-ui-express";
 import { db, reset, seed } from "./db.js";
 import { auth, roles } from "./auth.js";
 import { spec } from "./openapi.js";
 import { authRouter } from "./authRoutes.js";
+import { formsRouter } from "./formsRoutes.js";
 import { phase3Router } from "./phase3Routes.js";
-import { createPhase4Router, networkConfig } from "./phase4Routes.js";
+import {
+  createPhase4Router,
+  networkConfig,
+  updateNetworkConfig,
+} from "./phase4Routes.js";
+import { testControlGuard } from "./testControl.js";
 const app = express(),
   server = createServer(app),
-  io = new Server(server, { cors: { origin: "*" } }),
-  testMode = process.env.TEST_MODE !== "false";
+  io = new Server(server, { cors: { origin: "*" } });
 app.use(cors());
 app.use(express.json());
 app.use((q, r, n) => {
-  r.set("x-request-id", `req-${Date.now()}`);
+  r.set("x-request-id", `req-${randomUUID()}`);
   n();
 });
 app.get("/api/health", (_q, r) => r.json({ status: "UP" }));
 app.use("/api/docs", swagger.serve, swagger.setup(spec));
 app.use("/api/auth", authRouter);
 app.use("/api", auth);
+app.use("/api", formsRouter);
 app.use("/api", phase3Router);
 app.use("/api", createPhase4Router(io));
-app.get("/api/products", (q, r) => {
-  const page = Math.max(1, Number(q.query.page) || 1),
-    size = Math.min(100, Number(q.query.size) || 10),
-    s = `%${String(q.query.q || "")}%`;
-  const data = db
-      .prepare(
-        "SELECT * FROM products WHERE name LIKE ? OR category LIKE ? ORDER BY id LIMIT ? OFFSET ?",
-      )
-      .all(s, s, size, (page - 1) * size),
-    total = (
-      db
-        .prepare("SELECT COUNT(*) c FROM products WHERE name LIKE ?")
-        .get(s) as any
-    ).c;
-  r.json({ data, page, size, total });
-});
-app.post("/api/products", auth, roles("ADMIN"), (q, r) => {
-  try {
-    const b = q.body,
-      x = db
-        .prepare(
-          "INSERT INTO products(name,category,price,inventory,status,updated_at) VALUES(?,?,?,?,?,?)",
-        )
-        .run(
-          b.name,
-          b.category,
-          b.price,
-          b.inventory,
-          b.inventory ? "ACTIVE" : "OUT_OF_STOCK",
-          new Date().toISOString(),
-        );
-    r.status(201).json(
-      db.prepare("SELECT * FROM products WHERE id=?").get(x.lastInsertRowid),
-    );
-  } catch {
-    return r.status(409).json({ error: "Product name must be unique" });
-  }
-});
-app.delete("/api/products/:id", auth, roles("ADMIN"), (q, r) => {
-  db.prepare("DELETE FROM products WHERE id=?").run(String(q.params.id));
-  r.status(204).end();
-});
 app.get("/api/users", auth, roles("ADMIN"), (q, r) => {
-  const page = Number(q.query.page) || 1,
-    size = Number(q.query.size) || 20;
+  const requestedPage = Number(q.query.page),
+    requestedSize = Number(q.query.size),
+    page =
+      Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1,
+    size =
+      Number.isInteger(requestedSize) && requestedSize > 0
+        ? Math.min(requestedSize, 100)
+        : 20;
   r.json({
     data: Array.from({ length: size }, (_, i) => {
       const id = (page - 1) * size + i + 1;
@@ -90,56 +60,6 @@ app.get("/api/users", auth, roles("ADMIN"), (q, r) => {
     total: 100,
   });
 });
-app.post("/api/forms", (q, r) => {
-  const errors: Record<string, string> = {};
-  if (!q.body.name || String(q.body.name).length < 2)
-    errors.name = "Name must contain at least 2 characters";
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(q.body.email || "")))
-    errors.email = "A valid email is required";
-  if (q.body.email === "server-error@test.local")
-    errors.email = "This email is rejected by the server test scenario";
-  if (q.body.password !== q.body.confirmPassword)
-    errors.confirmPassword = "Passwords must match";
-  if (
-    q.body.quantity &&
-    (Number(q.body.quantity) < 1 || Number(q.body.quantity) > 10)
-  )
-    errors.quantity = "Quantity must be between 1 and 10";
-  if (q.body.employment === "Employed" && !q.body.company)
-    errors.company = "Company is required when employed";
-  if (Object.keys(errors).length)
-    return r.status(422).json({ error: "Form validation failed", errors });
-  const id = Number(
-    db
-      .prepare("INSERT INTO form_submissions(data,created_at) VALUES(?,?)")
-      .run(JSON.stringify(q.body), new Date().toISOString()).lastInsertRowid,
-  );
-  return r
-    .status(201)
-    .json({ id, data: q.body, message: "Form submitted successfully" });
-});
-app.get("/api/forms/:id", (q, r) => {
-  const row = db
-    .prepare("SELECT * FROM form_submissions WHERE id=?")
-    .get(String(q.params.id)) as
-    { id: number; data: string; created_at: string } | undefined;
-  return row
-    ? r.json({
-        id: row.id,
-        data: JSON.parse(row.data),
-        createdAt: row.created_at,
-      })
-    : r.status(404).json({ error: "Form submission not found" });
-});
-const upload = multer({ dest: "uploads/", limits: { fileSize: 5e6 } });
-app.post("/api/files/upload", upload.array("files", 5), (q, r) =>
-  r.status(201).json({
-    files: (q.files as Express.Multer.File[]).map((f) => ({
-      name: f.originalname,
-      size: f.size,
-    })),
-  }),
-);
 app.get("/api/files/download", (_q, r) =>
   r
     .attachment("test-lab-download.txt")
@@ -147,6 +67,11 @@ app.get("/api/files/download", (_q, r) =>
 );
 app.all("/api/status/:code", (q, r) => {
   const c = Number(q.params.code);
+  if (!Number.isInteger(c) || c < 200 || c > 599)
+    return r.status(422).json({
+      error: "Status code must be an integer between 200 and 599",
+      code: "INVALID_STATUS_CODE",
+    });
   c === 204
     ? r.status(c).end()
     : r.status(c).json({
@@ -155,56 +80,71 @@ app.all("/api/status/:code", (q, r) => {
         requestId: r.get("x-request-id"),
       });
 });
-app.get("/api/delay/:ms", (q, r) =>
-  setTimeout(
-    () => r.json({ completed: true, delay: Number(q.params.ms) }),
-    Math.min(Number(q.params.ms), 1e4),
-  ),
-);
-const only = (q: any, r: any, n: any) =>
-  !testMode
-    ? r.status(404).json({ error: "Test controls disabled" })
-    : q.get("x-test-key") ===
-        (process.env.TEST_CONTROL_KEY || "testlab-control")
-      ? n()
-      : r.status(403).json({ error: "Invalid test control key" });
-app.post("/api/test/reset", only, (_q, r) => {
+app.get("/api/delay/:ms", (q, r) => {
+  const delay = Number(q.params.ms);
+  if (!Number.isInteger(delay) || delay < 0 || delay > 10_000)
+    return r.status(422).json({
+      error: "Delay must be an integer between 0 and 10000",
+      code: "INVALID_DELAY",
+    });
+  return setTimeout(() => r.json({ completed: true, delay }), delay);
+});
+app.post("/api/test/reset", testControlGuard, (_q, r) => {
   reset();
   r.json({ message: "Database reset" });
 });
-app.post("/api/test/seed", only, (_q, r) => {
+app.post("/api/test/seed", testControlGuard, (_q, r) => {
   seed();
   r.json({ message: "Database seeded" });
 });
-app.post("/api/test/clock", only, (q, r) => r.json({ clock: q.body }));
-app.post("/api/test/network", only, (q, r) => {
-  Object.assign(networkConfig, q.body);
-  r.json({ network: networkConfig });
+app.post("/api/test/clock", testControlGuard, (q, r) =>
+  r.json({ clock: q.body }),
+);
+app.post("/api/test/network", testControlGuard, (q, r) => {
+  const error = updateNetworkConfig(q.body);
+  return error
+    ? r.status(422).json({ error })
+    : r.json({ network: networkConfig });
 });
-app.post("/api/test/events", only, (q, r) => {
+app.post("/api/test/events", testControlGuard, (q, r) => {
   io.emit("test-event", q.body);
   r.json({ sent: true });
 });
-app.post("/api/test/users/:id/lock", only, (q, r) => {
+app.post("/api/test/users/:id/lock", testControlGuard, (q, r) => {
   const locked = q.body.locked === false ? 0 : 1;
-  db.prepare("UPDATE users SET locked=?,failed_attempts=? WHERE id=?").run(
-    locked,
-    locked ? Number(process.env.MAX_LOGIN_ATTEMPTS || 5) : 0,
-    String(q.params.id),
-  );
+  const result = db
+    .prepare("UPDATE users SET locked=?,failed_attempts=? WHERE id=?")
+    .run(
+      locked,
+      locked ? Number(process.env.MAX_LOGIN_ATTEMPTS || 5) : 0,
+      String(q.params.id),
+    );
+  if (!result.changes)
+    return r.status(404).json({ error: "User not found" });
   r.json({ id: Number(q.params.id), locked: Boolean(locked) });
 });
-app.post("/api/test/sessions/:userId/expire", only, (q, r) => {
-  const result = db
-    .prepare(
-      "UPDATE auth_tokens SET revoked=1 WHERE user_id=? AND type='refresh'",
-    )
-    .run(String(q.params.userId));
-  r.json({
-    userId: Number(q.params.userId),
-    expiredSessions: Number(result.changes),
-  });
-});
+app.post(
+  "/api/test/sessions/:userId/expire",
+  testControlGuard,
+  (q, r) => {
+    const user = db
+      .prepare("SELECT id FROM users WHERE id=?")
+      .get(String(q.params.userId));
+    if (!user) return r.status(404).json({ error: "User not found" });
+    const result = db
+      .prepare(
+        "UPDATE auth_tokens SET revoked=1 WHERE user_id=? AND type='refresh'",
+      )
+      .run(String(q.params.userId));
+    db.prepare(
+      "UPDATE users SET session_version=session_version+1 WHERE id=?",
+    ).run(String(q.params.userId));
+    r.json({
+      userId: Number(q.params.userId),
+      expiredSessions: Number(result.changes),
+    });
+  },
+);
 app.get("/api/admin/audit", auth, roles("ADMIN"), (_q, r) =>
   r.json({
     data: db.prepare("SELECT * FROM audit ORDER BY id DESC LIMIT 100").all(),
@@ -212,9 +152,19 @@ app.get("/api/admin/audit", auth, roles("ADMIN"), (_q, r) =>
 );
 io.on("connection", (s) => {
   s.emit("status", { online: true, id: s.id });
-  s.on("chat", (m) => io.emit("chat", { ...m, id: `msg-${Date.now()}` }));
+  s.on("chat", (message) => {
+    const text =
+      typeof message === "object" &&
+      message !== null &&
+      "text" in message
+        ? String(message.text).slice(0, 2_000)
+        : String(message ?? "").slice(0, 2_000);
+    io.emit("chat", { text, id: `msg-${randomUUID()}` });
+  });
   s.on("counter", () => io.emit("counter", { value: Date.now() % 1000 }));
-  s.on("disconnect", () => s.broadcast.emit("presence", { online: false, id: s.id }));
+  s.on("disconnect", () =>
+    s.broadcast.emit("presence", { online: false, id: s.id }),
+  );
 });
 // API requests must never fall through to the SPA's HTML response. This keeps
 // every client-side API error parseable and makes incorrect routes diagnosable.

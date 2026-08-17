@@ -18,7 +18,7 @@ npm install
 npm run dev
 ```
 
-Frontend: `http://localhost:5173`; API: `http://localhost:3000`; Swagger: `http://localhost:3000/api/docs`.
+Frontend: `http://localhost:5173`; API: `http://localhost:3100`; Swagger: `http://localhost:3100/api/docs`.
 
 Production or Docker:
 
