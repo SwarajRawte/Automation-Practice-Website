@@ -2,79 +2,545 @@ import { Router } from "express";
 import type { Server } from "socket.io";
 import { db } from "./db.js";
 import type { AuthRequest } from "./types.js";
-import { roles } from "./auth.js";
+import { roles, userRoom } from "./auth.js";
 
-export type NetworkConfig = { delay: number; failureRate: number; offline: boolean; statusCode: number | null; rateLimit: number };
-export const networkConfig: NetworkConfig = { delay: 0, failureRate: 0, offline: false, statusCode: null, rateLimit: 10 };
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+export type NetworkConfig = {
+  delay: number;
+  failureRate: number;
+  offline: boolean;
+  statusCode: number | null;
+  rateLimit: number;
+};
+
+export const networkConfig: NetworkConfig = {
+  delay: 0,
+  failureRate: 0,
+  offline: false,
+  statusCode: null,
+  rateLimit: 10,
+};
+let failureAccumulator = 0,
+  rateWindowStarted = Date.now(),
+  rateWindowRequests = 0;
+
+const wait = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, Math.max(0, ms))),
+  isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+
+export function updateNetworkConfig(input: unknown): string | null {
+  if (!isRecord(input)) return "Network configuration must be an object";
+  const next = { ...networkConfig };
+  if ("delay" in input) {
+    const delay = Number(input.delay);
+    if (!Number.isInteger(delay) || delay < 0 || delay > 5_000)
+      return "Delay must be an integer between 0 and 5000";
+    next.delay = delay;
+  }
+  if ("failureRate" in input) {
+    const failureRate = Number(input.failureRate);
+    if (!Number.isFinite(failureRate) || failureRate < 0 || failureRate > 1)
+      return "Failure rate must be between 0 and 1";
+    next.failureRate = failureRate;
+  }
+  if ("offline" in input) {
+    if (typeof input.offline !== "boolean") return "Offline must be a boolean";
+    next.offline = input.offline;
+  }
+  if ("statusCode" in input) {
+    if (input.statusCode === null || input.statusCode === "") {
+      next.statusCode = null;
+    } else {
+      const statusCode = Number(input.statusCode);
+      if (!Number.isInteger(statusCode) || statusCode < 200 || statusCode > 599)
+        return "Status code must be null or an integer between 200 and 599";
+      next.statusCode = statusCode;
+    }
+  }
+  if ("rateLimit" in input) {
+    const rateLimit = Number(input.rateLimit);
+    if (!Number.isInteger(rateLimit) || rateLimit < 1 || rateLimit > 10_000)
+      return "Rate limit must be an integer between 1 and 10000";
+    next.rateLimit = rateLimit;
+  }
+  Object.assign(networkConfig, next);
+  failureAccumulator = 0;
+  rateWindowStarted = Date.now();
+  rateWindowRequests = 0;
+  return null;
+}
+
+type CheckoutItem = {
+  id: number;
+  name: string;
+  price: number;
+  inventory: number;
+  quantity: number;
+};
+
+class CheckoutError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly code: string,
+  ) {
+    super(message);
+  }
+}
+
+const rollback = () => {
+  try {
+    db.exec("ROLLBACK");
+  } catch {
+    // The transaction can already be closed when COMMIT itself fails.
+  }
+};
 
 export function createPhase4Router(io?: Server) {
   const router = Router();
+
   router.get("/shop/products", (req, res) => {
-    const q = `%${String(req.query.q || "")}%`, category = String(req.query.category || ""),
-      min = Number(req.query.min || 0), max = Number(req.query.max || 1e9),
-      sort = ["price_asc", "price_desc", "rating"].includes(String(req.query.sort)) ? String(req.query.sort) : "name",
-      order = sort === "price_asc" ? "price ASC" : sort === "price_desc" ? "price DESC" : sort === "rating" ? "((id % 5) + 1) DESC" : "name ASC";
-    const data = db.prepare(`SELECT *, ((id % 5) + 1) rating FROM products WHERE deleted_at IS NULL AND (name LIKE ? OR category LIKE ?) AND (?='' OR category=?) AND price BETWEEN ? AND ? ORDER BY ${order}`).all(q, q, category, category, min, max);
-    res.json({ data, total: data.length });
+    const min = req.query.min === undefined ? 0 : Number(req.query.min),
+      max = req.query.max === undefined ? 1e9 : Number(req.query.max);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min < 0 || max < min)
+      return res.status(422).json({ error: "Invalid price range" });
+    const q = `%${String(req.query.q || "")}%`,
+      category = String(req.query.category || ""),
+      sort = ["price_asc", "price_desc", "rating"].includes(
+        String(req.query.sort),
+      )
+        ? String(req.query.sort)
+        : "name",
+      order =
+        sort === "price_asc"
+          ? "price ASC"
+          : sort === "price_desc"
+            ? "price DESC"
+            : sort === "rating"
+              ? "((id % 5) + 1) DESC"
+              : "name ASC";
+    const data = db
+      .prepare(
+        `SELECT *, ((id % 5) + 1) rating FROM products WHERE deleted_at IS NULL AND (name LIKE ? OR category LIKE ?) AND (?='' OR category=?) AND price BETWEEN ? AND ? ORDER BY ${order}`,
+      )
+      .all(q, q, category, category, min, max);
+    return res.json({ data, total: data.length });
   });
+
   router.get("/shop/products/:id", (req, res) => {
-    const product = db.prepare("SELECT *, ((id % 5) + 1) rating FROM products WHERE id=? AND deleted_at IS NULL").get(String(req.params.id));
-    return product ? res.json(product) : res.status(404).json({ error: "Product not found" });
+    const product = db
+      .prepare(
+        "SELECT *, ((id % 5) + 1) rating FROM products WHERE id=? AND deleted_at IS NULL",
+      )
+      .get(String(req.params.id));
+    return product
+      ? res.json(product)
+      : res.status(404).json({ error: "Product not found" });
   });
-  router.get("/shop/wishlist", (req: AuthRequest, res) => res.json({ data: db.prepare("SELECT p.* FROM wishlists w JOIN products p ON p.id=w.product_id WHERE w.user_id=? ORDER BY w.created_at").all(req.user!.id) }));
-  router.post("/shop/wishlist/:productId", (req: AuthRequest, res) => {
-    db.prepare("INSERT OR IGNORE INTO wishlists(user_id,product_id,created_at) VALUES(?,?,?)").run(req.user!.id, String(req.params.productId), new Date().toISOString());
-    res.status(201).json({ added: true, productId: Number(req.params.productId) });
-  });
-  router.delete("/shop/wishlist/:productId", (req: AuthRequest, res) => { db.prepare("DELETE FROM wishlists WHERE user_id=? AND product_id=?").run(req.user!.id, String(req.params.productId)); res.status(204).end(); });
-  router.post("/shop/checkout", (req: AuthRequest, res) => {
-    const { items = [], cardNumber, shippingAddress, shippingMethod = "standard", discountCode } = req.body;
-    if (!items.length || !shippingAddress?.line1 || !shippingAddress?.city) return res.status(422).json({ error: "Cart and shipping address are required" });
-    if (cardNumber === "4000000000000002") return res.status(402).json({ error: "Payment declined", code: "PAYMENT_DECLINED" });
-    if (cardNumber === "4000000000009995") return res.status(408).json({ error: "Payment timed out", code: "PAYMENT_TIMEOUT" });
-    if (cardNumber !== "4111111111111111") return res.status(422).json({ error: "Use a documented mock card number" });
-    const rows = items.map((item: any) => {
-      const product = db.prepare("SELECT * FROM products WHERE id=?").get(Number(item.productId)) as any;
-      if (!product || product.inventory < Number(item.quantity)) throw new Error(`Insufficient stock for product ${item.productId}`);
-      return { ...product, quantity: Number(item.quantity) };
-    });
-    const subtotal = rows.reduce((sum: number, item: any) => sum + item.price * item.quantity, 0), discount = discountCode === "SAVE10" ? subtotal * .1 : 0;
-    if (discountCode && discountCode !== "SAVE10") return res.status(422).json({ error: "Invalid discount code", code: "INVALID_DISCOUNT" });
-    const shipping = shippingMethod === "express" ? 15 : 5, tax = (subtotal - discount) * .13, total = Number((subtotal - discount + shipping + tax).toFixed(2));
-    db.exec("BEGIN");
-    let orderId: number;
-    try {
-      orderId = Number(db.prepare("INSERT INTO orders(user_id,status,total,created_at) VALUES(?,?,?,?)").run(req.user!.id, "CONFIRMED", total, new Date().toISOString()).lastInsertRowid);
-      for (const item of rows) { db.prepare("INSERT INTO order_items(order_id,product_id,name,price,quantity) VALUES(?,?,?,?,?)").run(orderId, item.id, item.name, item.price, item.quantity); db.prepare("UPDATE products SET inventory=inventory-? WHERE id=?").run(item.quantity, item.id); }
-      db.exec("COMMIT");
-    } catch (error) {
-      db.exec("ROLLBACK");
-      throw error;
-    }
-    io?.emit("order-status", { orderId, status: "CONFIRMED" });
-    res.status(201).json({ orderId, status: "CONFIRMED", subtotal, discount, shipping, tax: Number(tax.toFixed(2)), total, message: "Payment successful" });
-  });
-  router.get("/shop/orders", (req: AuthRequest, res) => res.json({ data: db.prepare("SELECT * FROM orders WHERE user_id=? ORDER BY id DESC").all(req.user!.id) }));
+
+  router.get("/shop/wishlist", (req: AuthRequest, res) =>
+    res.json({
+      data: db
+        .prepare(
+          "SELECT p.* FROM wishlists w JOIN products p ON p.id=w.product_id WHERE w.user_id=? AND p.deleted_at IS NULL ORDER BY w.created_at",
+        )
+        .all(req.user!.id),
+    }),
+  );
+
+  router.post(
+    "/shop/wishlist/:productId",
+    roles("ADMIN", "USER"),
+    (req: AuthRequest, res) => {
+      const productId = Number(req.params.productId);
+      if (!Number.isInteger(productId) || productId <= 0)
+        return res.status(422).json({ error: "Invalid product id" });
+      const product = db
+        .prepare("SELECT id FROM products WHERE id=? AND deleted_at IS NULL")
+        .get(productId);
+      if (!product) return res.status(404).json({ error: "Product not found" });
+      const result = db
+        .prepare(
+          "INSERT OR IGNORE INTO wishlists(user_id,product_id,created_at) VALUES(?,?,?)",
+        )
+        .run(req.user!.id, productId, new Date().toISOString());
+      return res.status(result.changes ? 201 : 200).json({
+        added: Boolean(result.changes),
+        productId,
+      });
+    },
+  );
+
+  router.delete(
+    "/shop/wishlist/:productId",
+    roles("ADMIN", "USER"),
+    (req: AuthRequest, res) => {
+      db.prepare("DELETE FROM wishlists WHERE user_id=? AND product_id=?").run(
+        req.user!.id,
+        String(req.params.productId),
+      );
+      res.status(204).end();
+    },
+  );
+
+  router.post(
+    "/shop/checkout",
+    roles("ADMIN", "USER"),
+    (req: AuthRequest, res) => {
+      const body = isRecord(req.body) ? req.body : {},
+        rawItems = body.items,
+        shippingAddress = isRecord(body.shippingAddress)
+          ? body.shippingAddress
+          : {},
+        line1 =
+          typeof shippingAddress.line1 === "string"
+            ? shippingAddress.line1.trim()
+            : "",
+        city =
+          typeof shippingAddress.city === "string"
+            ? shippingAddress.city.trim()
+            : "";
+      if (!Array.isArray(rawItems) || !rawItems.length || !line1 || !city)
+        return res
+          .status(422)
+          .json({ error: "Cart and shipping address are required" });
+      if (rawItems.length > 100)
+        return res.status(422).json({ error: "Cart contains too many items" });
+
+      const quantities = new Map<number, number>();
+      for (const rawItem of rawItems) {
+        if (!isRecord(rawItem))
+          return res.status(422).json({ error: "Invalid cart item" });
+        const productId = Number(rawItem.productId),
+          quantity = Number(rawItem.quantity);
+        if (
+          !Number.isInteger(productId) ||
+          productId <= 0 ||
+          !Number.isSafeInteger(quantity) ||
+          quantity <= 0
+        )
+          return res.status(422).json({
+            error: "Product ids and quantities must be positive integers",
+            code: "INVALID_CART",
+          });
+        const combined = (quantities.get(productId) || 0) + quantity;
+        if (!Number.isSafeInteger(combined))
+          return res.status(422).json({
+            error: "Cart quantity is too large",
+            code: "INVALID_CART",
+          });
+        quantities.set(productId, combined);
+      }
+
+      const shippingMethod = body.shippingMethod || "standard";
+      if (shippingMethod !== "standard" && shippingMethod !== "express")
+        return res.status(422).json({ error: "Invalid shipping method" });
+      const discountCode = body.discountCode;
+      if (discountCode && discountCode !== "SAVE10")
+        return res.status(422).json({
+          error: "Invalid discount code",
+          code: "INVALID_DISCOUNT",
+        });
+      const cardNumber = body.cardNumber;
+      if (cardNumber === "4000000000000002")
+        return res
+          .status(402)
+          .json({ error: "Payment declined", code: "PAYMENT_DECLINED" });
+      if (cardNumber === "4000000000009995")
+        return res
+          .status(408)
+          .json({ error: "Payment timed out", code: "PAYMENT_TIMEOUT" });
+      if (cardNumber !== "4111111111111111")
+        return res
+          .status(422)
+          .json({ error: "Use a documented mock card number" });
+
+      let checkout: {
+        orderId: number;
+        subtotal: number;
+        discount: number;
+        shipping: number;
+        tax: number;
+        total: number;
+      };
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const rows: CheckoutItem[] = [...quantities].map(
+          ([productId, quantity]) => {
+            const product = db
+              .prepare(
+                "SELECT id,name,price,inventory,status FROM products WHERE id=? AND deleted_at IS NULL",
+              )
+              .get(productId) as
+              | {
+                  id: number;
+                  name: string;
+                  price: number;
+                  inventory: number;
+                  status: string;
+                }
+              | undefined;
+            if (!product || product.status === "INACTIVE")
+              throw new CheckoutError(
+                409,
+                `Product ${productId} is unavailable`,
+                "PRODUCT_UNAVAILABLE",
+              );
+            if (product.inventory < quantity)
+              throw new CheckoutError(
+                409,
+                `Insufficient stock for product ${productId}`,
+                "INSUFFICIENT_STOCK",
+              );
+            return { ...product, quantity };
+          },
+        );
+        const subtotal = Number(
+            rows
+              .reduce((sum, item) => sum + item.price * item.quantity, 0)
+              .toFixed(2),
+          ),
+          discount =
+            discountCode === "SAVE10" ? Number((subtotal * 0.1).toFixed(2)) : 0,
+          shipping = shippingMethod === "express" ? 15 : 5,
+          tax = Number(((subtotal - discount) * 0.13).toFixed(2)),
+          total = Number((subtotal - discount + shipping + tax).toFixed(2)),
+          orderId = Number(
+            db
+              .prepare(
+                "INSERT INTO orders(user_id,status,total,created_at) VALUES(?,?,?,?)",
+              )
+              .run(req.user!.id, "CONFIRMED", total, new Date().toISOString())
+              .lastInsertRowid,
+          );
+        for (const item of rows) {
+          db.prepare(
+            "INSERT INTO order_items(order_id,product_id,name,price,quantity) VALUES(?,?,?,?,?)",
+          ).run(orderId, item.id, item.name, item.price, item.quantity);
+          const updated = db
+            .prepare(
+              "UPDATE products SET inventory=inventory-?,status=CASE WHEN inventory-?=0 THEN 'OUT_OF_STOCK' ELSE status END,version=version+1,updated_at=? WHERE id=? AND deleted_at IS NULL AND inventory>=?",
+            )
+            .run(
+              item.quantity,
+              item.quantity,
+              new Date().toISOString(),
+              item.id,
+              item.quantity,
+            );
+          if (!updated.changes)
+            throw new CheckoutError(
+              409,
+              `Insufficient stock for product ${item.id}`,
+              "INSUFFICIENT_STOCK",
+            );
+        }
+        checkout = { orderId, subtotal, discount, shipping, tax, total };
+        db.exec("COMMIT");
+      } catch (error) {
+        rollback();
+        if (error instanceof CheckoutError)
+          return res
+            .status(error.status)
+            .json({ error: error.message, code: error.code });
+        throw error;
+      }
+      io?.to(userRoom(req.user!.id)).emit("order-status", {
+        orderId: checkout.orderId,
+        status: "CONFIRMED",
+      });
+      return res.status(201).json({
+        orderId: checkout.orderId,
+        status: "CONFIRMED",
+        subtotal: checkout.subtotal,
+        discount: checkout.discount,
+        shipping: checkout.shipping,
+        tax: checkout.tax,
+        total: checkout.total,
+        message: "Payment successful",
+      });
+    },
+  );
+
+  router.get("/shop/orders", (req: AuthRequest, res) =>
+    res.json({
+      data: db
+        .prepare("SELECT * FROM orders WHERE user_id=? ORDER BY id DESC")
+        .all(req.user!.id),
+    }),
+  );
+
   router.get("/shop/orders/:id", (req: AuthRequest, res) => {
-    const order = db.prepare("SELECT * FROM orders WHERE id=? AND user_id=?").get(String(req.params.id), req.user!.id) as any;
-    return order ? res.json({ ...order, items: db.prepare("SELECT * FROM order_items WHERE order_id=?").all(order.id) }) : res.status(404).json({ error: "Order not found" });
+    const order = db
+      .prepare("SELECT * FROM orders WHERE id=? AND user_id=?")
+      .get(String(req.params.id), req.user!.id) as any;
+    return order
+      ? res.json({
+          ...order,
+          items: db
+            .prepare("SELECT * FROM order_items WHERE order_id=?")
+            .all(order.id),
+        })
+      : res.status(404).json({ error: "Order not found" });
   });
-  router.post("/shop/orders/:id/cancel", (req: AuthRequest, res) => {
-    const result = db.prepare("UPDATE orders SET status='CANCELLED' WHERE id=? AND user_id=? AND status!='DELIVERED'").run(String(req.params.id), req.user!.id);
-    if (!result.changes) return res.status(409).json({ error: "Order cannot be cancelled" });
-    io?.emit("order-status", { orderId: Number(req.params.id), status: "CANCELLED" }); res.json({ id: Number(req.params.id), status: "CANCELLED" });
-  });
+
+  router.post(
+    "/shop/orders/:id/cancel",
+    roles("ADMIN", "USER"),
+    (req: AuthRequest, res) => {
+      const orderId = Number(req.params.id);
+      if (!Number.isInteger(orderId) || orderId <= 0)
+        return res.status(404).json({ error: "Order not found" });
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const order = db
+          .prepare("SELECT * FROM orders WHERE id=? AND user_id=?")
+          .get(orderId, req.user!.id) as
+          { id: number; status: string } | undefined;
+        if (!order)
+          throw new CheckoutError(404, "Order not found", "NOT_FOUND");
+        if (order.status === "CANCELLED")
+          throw new CheckoutError(
+            409,
+            "Order is already cancelled",
+            "ORDER_ALREADY_CANCELLED",
+          );
+        if (order.status === "DELIVERED")
+          throw new CheckoutError(
+            409,
+            "Delivered orders cannot be cancelled",
+            "ORDER_NOT_CANCELLABLE",
+          );
+        const result = db
+          .prepare(
+            "UPDATE orders SET status='CANCELLED' WHERE id=? AND user_id=? AND status NOT IN ('CANCELLED','DELIVERED')",
+          )
+          .run(orderId, req.user!.id);
+        if (!result.changes)
+          throw new CheckoutError(
+            409,
+            "Order cannot be cancelled",
+            "ORDER_NOT_CANCELLABLE",
+          );
+        // Orders created by checkout start as CONFIRMED and have reduced stock.
+        // Seeded historical PROCESSING orders do not reserve current inventory.
+        if (order.status === "CONFIRMED") {
+          const items = db
+            .prepare(
+              "SELECT product_id,quantity FROM order_items WHERE order_id=?",
+            )
+            .all(orderId) as Array<{ product_id: number; quantity: number }>;
+          for (const item of items)
+            db.prepare(
+              "UPDATE products SET inventory=inventory+?,status=CASE WHEN status='OUT_OF_STOCK' THEN 'ACTIVE' ELSE status END,version=version+1,updated_at=? WHERE id=?",
+            ).run(item.quantity, new Date().toISOString(), item.product_id);
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        rollback();
+        if (error instanceof CheckoutError)
+          return res
+            .status(error.status)
+            .json({ error: error.message, code: error.code });
+        throw error;
+      }
+      io?.to(userRoom(req.user!.id)).emit("order-status", {
+        orderId,
+        status: "CANCELLED",
+      });
+      return res.json({ id: orderId, status: "CANCELLED" });
+    },
+  );
+
   router.get("/network/config", (_req, res) => res.json(networkConfig));
-  router.put("/network/config", roles("ADMIN"), (req, res) => { Object.assign(networkConfig, req.body); res.json(networkConfig); });
-  router.all("/network/echo", async (req, res) => {
-    await wait(Math.min(5000, Number(networkConfig.delay)));
-    if (networkConfig.offline) return res.status(503).json({ error: "Simulated offline mode" });
-    if (networkConfig.statusCode) return res.status(networkConfig.statusCode).json({ simulated: true, status: networkConfig.statusCode });
-    res.set("x-test-lab", "phase-4").json({ method: req.method, query: req.query, body: req.body, requestId: res.get("x-request-id") });
+  router.put("/network/config", roles("ADMIN"), (req, res) => {
+    const error = updateNetworkConfig(req.body);
+    return error ? res.status(422).json({ error }) : res.json(networkConfig);
   });
-  router.get("/admin/summary", roles("ADMIN"), (_req, res) => res.json({ users: (db.prepare("SELECT COUNT(*) count FROM users").get() as any).count, orders: (db.prepare("SELECT COUNT(*) count FROM orders").get() as any).count, revenue: (db.prepare("SELECT COALESCE(SUM(total),0) total FROM orders WHERE status!='CANCELLED'").get() as any).total, products: (db.prepare("SELECT COUNT(*) count FROM products WHERE deleted_at IS NULL").get() as any).count }));
-  router.get("/admin/orders", roles("ADMIN"), (_req, res) => res.json({ data: db.prepare("SELECT o.*,u.email FROM orders o JOIN users u ON u.id=o.user_id ORDER BY o.id DESC").all() }));
-  router.get("/admin/export", roles("ADMIN"), (_req, res) => { const rows = db.prepare("SELECT id,user_id,status,total,created_at FROM orders ORDER BY id").all() as any[]; res.attachment("orders-report.csv").send(`id,user_id,status,total,created_at\n${rows.map((x) => `${x.id},${x.user_id},${x.status},${x.total},${x.created_at}`).join("\n")}`); });
+  router.all("/network/echo", async (req, res) => {
+    const now = Date.now();
+    if (now - rateWindowStarted >= 1_000) {
+      rateWindowStarted = now;
+      rateWindowRequests = 0;
+    }
+    rateWindowRequests += 1;
+    if (rateWindowRequests > networkConfig.rateLimit)
+      return res.status(429).json({
+        error: "Simulated rate limit exceeded",
+        code: "RATE_LIMITED",
+      });
+    await wait(networkConfig.delay);
+    if (networkConfig.offline)
+      return res.status(503).json({ error: "Simulated offline mode" });
+    if (networkConfig.statusCode)
+      return res.status(networkConfig.statusCode).json({
+        simulated: true,
+        status: networkConfig.statusCode,
+      });
+    failureAccumulator += networkConfig.failureRate;
+    if (failureAccumulator >= 1) {
+      failureAccumulator -= 1;
+      return res.status(503).json({
+        error: "Simulated network failure",
+        code: "SIMULATED_FAILURE",
+      });
+    }
+    return res.set("x-test-lab", "phase-4").json({
+      method: req.method,
+      query: req.query,
+      body: req.body,
+      requestId: res.get("x-request-id"),
+    });
+  });
+
+  router.get("/admin/summary", roles("ADMIN"), (_req, res) =>
+    res.json({
+      users: (db.prepare("SELECT COUNT(*) count FROM users").get() as any)
+        .count,
+      orders: (db.prepare("SELECT COUNT(*) count FROM orders").get() as any)
+        .count,
+      revenue: (
+        db
+          .prepare(
+            "SELECT COALESCE(SUM(total),0) total FROM orders WHERE status!='CANCELLED'",
+          )
+          .get() as any
+      ).total,
+      products: (
+        db
+          .prepare(
+            "SELECT COUNT(*) count FROM products WHERE deleted_at IS NULL",
+          )
+          .get() as any
+      ).count,
+    }),
+  );
+  router.get("/admin/orders", roles("ADMIN"), (_req, res) =>
+    res.json({
+      data: db
+        .prepare(
+          "SELECT o.*,u.email FROM orders o JOIN users u ON u.id=o.user_id ORDER BY o.id DESC",
+        )
+        .all(),
+    }),
+  );
+  router.get("/admin/export", roles("ADMIN"), (_req, res) => {
+    const rows = db
+      .prepare(
+        "SELECT id,user_id,status,total,created_at FROM orders ORDER BY id",
+      )
+      .all() as any[];
+    res
+      .attachment("orders-report.csv")
+      .type("text/csv")
+      .send(
+        `id,user_id,status,total,created_at\n${rows
+          .map(
+            (row) =>
+              `${row.id},${row.user_id},${row.status},${row.total},${row.created_at}`,
+          )
+          .join("\n")}`,
+      );
+  });
   return router;
 }

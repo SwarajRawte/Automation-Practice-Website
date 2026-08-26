@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
 import { PageHeader } from "./components/layout/PageHeader";
+import { authenticatedFetch } from "./authClient";
 import {
   AppWindow,
   FormInput,
@@ -10,17 +11,60 @@ import {
   PanelTopOpen,
 } from "lucide-react";
 const jsonApi = async (url: string, init?: RequestInit) => {
-  const r = await fetch(url, {
+  const r = await authenticatedFetch(url, {
       ...init,
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${localStorage.getItem("token") || ""}`,
         ...init?.headers,
       },
     }),
     body = await r.json();
-  if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+  if (!r.ok) {
+    const error = new Error(body.error || `HTTP ${r.status}`) as Error & {
+      issues?: string[];
+    };
+    const fieldErrors =
+      body.errors && typeof body.errors === "object"
+        ? Object.values(body.errors).filter(
+            (value): value is string => typeof value === "string",
+          )
+        : [];
+    error.issues = fieldErrors.length ? fieldErrors : [error.message];
+    throw error;
+  }
   return body;
+};
+const redactSubmission = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const redacted = { ...(value as Record<string, unknown>) };
+  delete redacted.password;
+  delete redacted.confirmPassword;
+  return redacted;
+};
+const readLastSubmission = (): Record<string, unknown> | null => {
+  try {
+    const stored = sessionStorage.getItem("last-form-submission");
+    if (!stored) return null;
+    const parsed: unknown = JSON.parse(stored);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return null;
+    const redacted = redactSubmission(parsed);
+    sessionStorage.setItem("last-form-submission", JSON.stringify(redacted));
+    return redacted;
+  } catch {
+    return null;
+  }
+};
+const serializeForm = (form: HTMLFormElement) => {
+  const formData = new FormData(form),
+    data: Record<string, string | string[]> = {};
+  for (const key of new Set(formData.keys())) {
+    const values = formData
+      .getAll(key)
+      .map((value) => (value instanceof File ? value.name : value));
+    data[key] = values.length === 1 ? values[0] : values;
+  }
+  return data;
 };
 function TestInfo({
   name,
@@ -43,24 +87,28 @@ export function Phase2Forms() {
     [errors, setErrors] = useState<string[]>([]),
     [status, setStatus] = useState("");
   if (loc.pathname.endsWith("/confirmation")) {
-    const data = JSON.parse(
-      sessionStorage.getItem("last-form-submission") || "{}",
-    );
+    const data = readLastSubmission();
     return (
       <>
         <h2>Form submission confirmation</h2>
-        <p role="status">Form submitted successfully</p>
-        <table>
-          <caption>Submitted data</caption>
-          <tbody>
-            {Object.entries(data).map(([k, v]) => (
-              <tr key={k}>
-                <th>{k}</th>
-                <td>{String(v)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {data ? (
+          <>
+            <p role="status">Form submitted successfully</p>
+            <table>
+              <caption>Submitted data</caption>
+              <tbody>
+                {Object.entries(data).map(([k, v]) => (
+                  <tr key={k}>
+                    <th scope="row">{k}</th>
+                    <td>{Array.isArray(v) ? v.join(", ") : String(v)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        ) : (
+          <p role="status">No form submission is available.</p>
+        )}
         <button onClick={() => nav("/forms/basic")}>Submit another</button>
         <TestInfo
           name="Form confirmation"
@@ -73,8 +121,9 @@ export function Phase2Forms() {
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = e.currentTarget,
-      data = Object.fromEntries(new FormData(form)),
+      data = serializeForm(form),
       issues: string[] = [];
+    setStatus("");
     if (String(data.password) !== String(data.confirmPassword))
       issues.push("Passwords must match");
     if (data.employment === "Employed" && !data.company)
@@ -88,14 +137,18 @@ export function Phase2Forms() {
         method: "POST",
         body: JSON.stringify(data),
       });
+      const persistedSubmission = redactSubmission(result.data);
       sessionStorage.setItem(
         "last-form-submission",
-        JSON.stringify(result.data),
+        JSON.stringify(persistedSubmission),
       );
       setStatus(result.message);
       nav("/forms/confirmation");
-    } catch (error: any) {
-      setErrors([error.message]);
+    } catch (error) {
+      const failure = error as Error & { issues?: string[] };
+      setErrors(
+        failure.issues || [failure.message || "Form submission failed"],
+      );
     }
   };
   return (
@@ -109,6 +162,12 @@ export function Phase2Forms() {
       <form
         className="panel form grid phase2-form"
         onSubmit={submit}
+        onReset={() => {
+          setDynamic([""]);
+          setCountry("Canada");
+          setErrors([]);
+          setStatus("");
+        }}
         noValidate={loc.pathname.endsWith("/validation")}
       >
         <label>
@@ -314,15 +373,17 @@ export function Phase2Forms() {
                 name={`dynamic-${i + 1}`}
                 value={value}
                 onChange={(e) =>
-                  setDynamic(
-                    dynamic.map((x, j) => (j === i ? e.target.value : x)),
+                  setDynamic((current) =>
+                    current.map((x, j) => (j === i ? e.target.value : x)),
                   )
                 }
               />
               <button
                 type="button"
                 className="danger"
-                onClick={() => setDynamic(dynamic.filter((_, j) => j !== i))}
+                onClick={() =>
+                  setDynamic((current) => current.filter((_, j) => j !== i))
+                }
               >
                 Remove
               </button>
@@ -332,7 +393,7 @@ export function Phase2Forms() {
         <button
           type="button"
           className="secondary"
-          onClick={() => setDynamic([...dynamic, ""])}
+          onClick={() => setDynamic((current) => [...current, ""])}
         >
           Add dynamic field
         </button>
@@ -381,9 +442,16 @@ export function Phase2Interactions() {
     hold = useRef<number | undefined>(undefined);
   const add = (event: string) =>
     setLog((v) => [`${String(v.length + 1).padStart(2, "0")}: ${event}`, ...v]);
+  const clearHold = () => {
+    clearTimeout(hold.current);
+    hold.current = undefined;
+  };
   useEffect(() => {
     const timer = setTimeout(() => setDelayed(true), 1200);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(hold.current);
+    };
   }, []);
   if (keyboard) return <KeyboardLab />;
   if (actions) return <ActionsLab />;
@@ -410,12 +478,15 @@ export function Phase2Interactions() {
         </button>
         <button
           onPointerDown={() => {
-            hold.current = window.setTimeout(
-              () => add("click and hold completed"),
-              800,
-            );
+            clearHold();
+            hold.current = window.setTimeout(() => {
+              hold.current = undefined;
+              add("click and hold completed");
+            }, 800);
           }}
-          onPointerUp={() => clearTimeout(hold.current)}
+          onPointerUp={clearHold}
+          onPointerCancel={clearHold}
+          onPointerLeave={clearHold}
         >
           Click and hold
         </button>
@@ -451,7 +522,7 @@ export function Phase2Interactions() {
         )}
         <button
           className={moving ? "moved" : ""}
-          onMouseEnter={() => setMoving(!moving)}
+          onMouseEnter={() => setMoving((value) => !value)}
           onClick={() => add("moving button caught")}
         >
           Moving target
@@ -521,7 +592,10 @@ export function Phase2Interactions() {
         <div
           className="drop-zone"
           onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => add(`dropped ${e.dataTransfer.getData("text/plain")}`)}
+          onDrop={(e) => {
+            e.preventDefault();
+            add(`dropped ${e.dataTransfer.getData("text/plain")}`);
+          }}
         >
           Drop zone
         </div>
@@ -559,6 +633,14 @@ function ActionsLab() {
     );
     record(`${additive ? "Modifier" : "Normal"} click: ${name}`);
   };
+  useEffect(() => {
+    const release = () => setDragging(false);
+    window.addEventListener("mouseup", release);
+    return () => {
+      window.removeEventListener("mouseup", release);
+      clearTimeout(holdTimer.current);
+    };
+  }, []);
   return (
     <>
       <PageHeader
@@ -570,7 +652,9 @@ function ActionsLab() {
       <div className="actions-lab">
         <section className="panel action-card">
           <h3>Move and hover</h3>
-          <p>Use <code>moveToElement</code> to reveal the hidden menu.</p>
+          <p>
+            Use <code>moveToElement</code> to reveal the hidden menu.
+          </p>
           <div
             className="hover-target"
             data-testid="actions-hover-target"
@@ -596,8 +680,18 @@ function ActionsLab() {
           <h3>Click variations</h3>
           <p>Practice click, double-click, and context-click.</p>
           <div className="actions">
-            <button data-testid="actions-click" onClick={() => record("Single click")}>Single click</button>
-            <button data-testid="actions-double-click" onDoubleClick={() => record("Double click")}>Double-click</button>
+            <button
+              data-testid="actions-click"
+              onClick={() => record("Single click")}
+            >
+              Single click
+            </button>
+            <button
+              data-testid="actions-double-click"
+              onDoubleClick={() => record("Double click")}
+            >
+              Double-click
+            </button>
             <button
               data-testid="actions-context-click"
               onContextMenu={(event) => {
@@ -635,7 +729,9 @@ function ActionsLab() {
 
         <section className="panel action-card">
           <h3>Drag and drop</h3>
-          <p>Use <code>dragAndDrop</code> or click-and-hold, move, release.</p>
+          <p>
+            Use <code>dragAndDrop</code> or click-and-hold, move, release.
+          </p>
           <div className="action-drag-row">
             <div
               className="action-drag-source"
@@ -646,12 +742,15 @@ function ActionsLab() {
                 setDragging(true);
                 record("Drag started");
               }}
+              onDragEnd={() => setDragging(false)}
               onMouseDown={() => setDragging(true)}
             >
               {dropped ? "Moved" : "Drag item"}
             </div>
             <div
-              className={dropped ? "action-drop-target complete" : "action-drop-target"}
+              className={
+                dropped ? "action-drop-target complete" : "action-drop-target"
+              }
               data-testid="actions-drop-target"
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
@@ -683,7 +782,9 @@ function ActionsLab() {
                 className={selected.includes(item) ? "selected" : ""}
                 aria-pressed={selected.includes(item)}
                 data-testid={`modifier-${item.toLowerCase()}`}
-                onClick={(event) => toggleSelection(item, event.ctrlKey || event.metaKey)}
+                onClick={(event) =>
+                  toggleSelection(item, event.ctrlKey || event.metaKey)
+                }
               >
                 {item}
               </button>
@@ -698,7 +799,9 @@ function ActionsLab() {
             className="offset-pad"
             data-testid="actions-offset-pad"
             onClick={(event) =>
-              record(`Offset click: ${event.nativeEvent.offsetX}, ${event.nativeEvent.offsetY}`)
+              record(
+                `Offset click: ${event.nativeEvent.offsetX}, ${event.nativeEvent.offsetY}`,
+              )
             }
           >
             Click at an offset
@@ -730,7 +833,13 @@ actions.scrollToElement(scrollTarget).click().perform();`}</pre>
       <section className="panel">
         <h3>Action event log</h3>
         <ol data-testid="actions-event-log">
-          {events.length ? events.map((event, index) => <li key={`${event}-${index}`}>{event}</li>) : <li>No actions recorded</li>}
+          {events.length ? (
+            events.map((event, index) => (
+              <li key={`${event}-${index}`}>{event}</li>
+            ))
+          ) : (
+            <li>No actions recorded</li>
+          )}
         </ol>
       </section>
       <TestInfo
@@ -762,7 +871,12 @@ function KeyboardLab() {
       e.preventDefault();
       setActive((x) => Math.max(0, x - 1));
     }
-    if (e.key === "Enter" && e.ctrlKey) setItems([...items, "Shortcut item"]);
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey))
+      setItems((current) =>
+        current.includes("Shortcut item")
+          ? current
+          : [...current, "Shortcut item"],
+      );
     if (e.key === "Escape") setModal(false);
   };
   return (
@@ -783,9 +897,15 @@ function KeyboardLab() {
           />
         </label>
         <p>Custom shortcut: Control/Command + Enter adds an item.</p>
-        <div role="listbox" aria-label="Keyboard listbox" tabIndex={0}>
+        <div
+          role="listbox"
+          aria-label="Keyboard listbox"
+          aria-activedescendant={`keyboard-option-${active}`}
+          tabIndex={0}
+        >
           {items.map((x, i) => (
             <div
+              id={`keyboard-option-${i}`}
               role="option"
               aria-selected={i === active}
               className={i === active ? "selected" : ""}
@@ -829,18 +949,24 @@ export function Phase2Dialogs() {
   const [response, setResponse] = useState("No interaction yet"),
     [modal, setModal] = useState<ModalKind>(null),
     [nested, setNested] = useState(false),
-    [notice, setNotice] = useState("");
+    [notice, setNotice] = useState(""),
+    [delayedReady, setDelayedReady] = useState(false),
+    noticeTimer = useRef<number | undefined>(undefined);
   const toast = (text: string) => {
+    clearTimeout(noticeTimer.current);
     setNotice(text);
-    setTimeout(() => setNotice(""), 1800);
+    noticeTimer.current = window.setTimeout(() => setNotice(""), 1800);
   };
   useEffect(() => {
-    const t = setTimeout(
-      () => setResponse("Delayed modal is ready to trigger"),
-      1500,
-    );
-    return () => clearTimeout(t);
+    const delayedTimer = setTimeout(() => setDelayedReady(true), 1500);
+    return () => {
+      clearTimeout(delayedTimer);
+      clearTimeout(noticeTimer.current);
+    };
   }, []);
+  useEffect(() => {
+    if (modal !== "nested") setNested(false);
+  }, [modal]);
   return (
     <>
       <PageHeader
@@ -881,6 +1007,13 @@ export function Phase2Dialogs() {
         <button onClick={() => setModal("custom")}>Custom modal</button>
         <button onClick={() => setModal("nested")}>Nested modal</button>
         <button onClick={() => setModal("form")}>Modal form</button>
+        <button
+          data-testid="delayed-modal-button"
+          disabled={!delayedReady}
+          onClick={() => setModal("custom")}
+        >
+          Delayed modal
+        </button>
         <button onClick={() => setModal("locked")}>
           Non-dismissible modal
         </button>
@@ -921,6 +1054,7 @@ export function Phase2Dialogs() {
             <h3 id="dialog-title">{modal} modal</h3>
             {modal === "form" && (
               <form
+                noValidate
                 onSubmit={(e) => {
                   e.preventDefault();
                   const value = new FormData(e.currentTarget).get("modalName");
@@ -984,22 +1118,47 @@ export function Phase2Dialogs() {
 export function Phase2Contexts() {
   const loc = useLocation(),
     frames = loc.pathname.startsWith("/frames"),
-    [messages, setMessages] = useState<string[]>([]);
+    [messages, setMessages] = useState<string[]>([]),
+    childWindows = useRef<Window[]>([]);
+  const openContext = (
+    url: string,
+    target = "_blank",
+    features?: string,
+  ) => {
+    const opened = window.open(url, target, features);
+    if (opened) {
+      childWindows.current = [
+        ...childWindows.current.filter((childWindow) => !childWindow.closed),
+        opened,
+      ].slice(-20);
+    }
+    return opened;
+  };
   useEffect(() => {
-    const fn = (e: MessageEvent) =>
-      setMessages((v) => [`Received: ${String(e.data)}`, ...v]);
+    const fn = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      if (!e.source || !childWindows.current.includes(e.source as Window))
+        return;
+      if (typeof e.data !== "string" || e.data.length > 500) return;
+      setMessages((v) => [`Received: ${e.data}`, ...v].slice(0, 50));
+    };
     addEventListener("message", fn);
     return () => removeEventListener("message", fn);
   }, []);
   if (frames) return <Frames />;
-  const child = new URLSearchParams(loc.search).get("context");
+  const child = new URLSearchParams(loc.search).get("context")?.slice(0, 100);
   if (child)
     return (
       <>
         <h2>Unique {child} context</h2>
         <p data-testid="context-id">Context identifier: {child}</p>
         <button
-          onClick={() => window.opener?.postMessage(`hello from ${child}`, "*")}
+          onClick={() =>
+            window.opener?.postMessage(
+              `hello from ${child}`,
+              window.location.origin,
+            )
+          }
         >
           Message parent
         </button>
@@ -1016,14 +1175,14 @@ export function Phase2Contexts() {
       />
       <div className="panel actions">
         <button
-          onClick={() => window.open("/windows?context=tab-one", "_blank")}
+          onClick={() => openContext("/windows?context=tab-one")}
         >
           Open new tab
         </button>
         <button
           onClick={() =>
             ["tab-a", "tab-b", "tab-c"].forEach((x) =>
-              window.open(`/windows?context=${x}`, "_blank"),
+              openContext(`/windows?context=${x}`),
             )
           }
         >
@@ -1031,7 +1190,7 @@ export function Phase2Contexts() {
         </button>
         <button
           onClick={() =>
-            window.open(
+            openContext(
               "/windows?context=child-window",
               "testlab-child",
               "width=600,height=500",
@@ -1042,7 +1201,7 @@ export function Phase2Contexts() {
         </button>
         <button
           onClick={() =>
-            window.open(
+            openContext(
               "/windows?context=communication-child",
               "communication-child",
               "width=600,height=500",
@@ -1053,8 +1212,8 @@ export function Phase2Contexts() {
         </button>
       </div>
       <ul aria-label="Window message log">
-        {messages.map((x) => (
-          <li key={x}>{x}</li>
+        {messages.map((x, index) => (
+          <li key={`${x}-${index}`}>{x}</li>
         ))}
       </ul>
       <TestInfo
@@ -1065,8 +1224,9 @@ export function Phase2Contexts() {
   );
 }
 function Frames() {
+  const [dynamicGeneration, setDynamicGeneration] = useState(1);
   const nested =
-    '<h2 id="outer-text">Outer frame</h2><iframe title="Nested inner frame" srcdoc="<h3 id=inner-text>Unique nested inner frame</h3><button id=inner-button>Inner action</button>"></iframe>';
+    '<h2 id="outer-text">Outer frame</h2><iframe title="Nested inner frame" srcdoc="<h3 id=inner-text>Unique nested inner frame</h3><button id=inner-button onclick=&quot;document.getElementById(\'inner-result\').textContent=\'Inner action completed\'&quot;>Inner action</button><output id=inner-result></output>"></iframe>';
   return (
     <>
       <PageHeader
@@ -1079,22 +1239,28 @@ function Frames() {
         <iframe
           title="Basic frame"
           srcDoc={
-            '<h2 id="basic-text">Unique basic iframe</h2><button id="basic-button">Basic frame button</button>'
+            '<h2 id="basic-text">Unique basic iframe</h2><button id="basic-button" onclick="document.getElementById(\'basic-result\').textContent=\'Basic action completed\'">Basic frame button</button><output id="basic-result"></output>'
           }
         />
         <iframe
           title="Form frame"
           srcDoc={
-            '<h2>Iframe form</h2><form><label>Email <input id="frame-email" type="email"></label><button id="frame-submit">Submit frame form</button></form>'
+            '<h2>Iframe form</h2><form onsubmit="event.preventDefault();document.getElementById(\'frame-result\').textContent=\'Frame form submitted: \'+document.getElementById(\'frame-email\').value"><label>Email <input id="frame-email" type="email" required></label><button id="frame-submit">Submit frame form</button><output id="frame-result"></output></form>'
           }
         />
         <iframe title="Nested frame" srcDoc={nested} />
         <iframe
           title="Dynamic frame"
-          key="dynamic-frame"
-          srcDoc={'<h2 id="dynamic-frame">Dynamic iframe content</h2>'}
+          key={dynamicGeneration}
+          srcDoc={`<h2 id="dynamic-frame">Dynamic iframe generation ${dynamicGeneration}</h2>`}
         />
       </div>
+      <button
+        className="secondary"
+        onClick={() => setDynamicGeneration((value) => value + 1)}
+      >
+        Replace dynamic frame
+      </button>
       <p>
         Cross-origin simulation: automation should treat a real remote origin as
         restricted; this local lab remains offline and safe.

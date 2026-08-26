@@ -9,7 +9,6 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
-import { io } from "socket.io-client";
 import {
   Activity,
   AlertTriangle,
@@ -56,8 +55,33 @@ import {
   Phase3Dynamic,
   Phase3ShadowDom,
 } from "./phase3";
-import { Phase4Admin, Phase4Network, Phase4Realtime, Phase4Shop } from "./phase4";
+import {
+  Phase4Admin,
+  Phase4Network,
+  Phase4Realtime,
+  Phase4Shop,
+} from "./phase4";
+import {
+  Phase5Accessibility,
+  Phase5Errors,
+  Phase5I18n,
+  Phase5Responsive,
+  Phase5Storage,
+  Phase5Visual,
+} from "./phase5";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
+import {
+  acceptLogin,
+  authenticatedFetch,
+  clearAuthentication,
+  createAuthenticatedSocket,
+  getSessionUser,
+  hasAuthenticationHint,
+  logout as logoutSession,
+  readCachedUser,
+  validateSession,
+  type SessionUser,
+} from "./authClient";
 import "./styles.css";
 const modules = [
   ["Dashboard", "/dashboard"],
@@ -150,17 +174,30 @@ const navGroups = [
     ],
   },
 ] as const;
+
+type StoredUser = SessionUser;
+
+function readStoredUser(): StoredUser | null {
+  return getSessionUser() || readCachedUser();
+}
+
+function safeReturnUrl(value: string | null, fallback = "/dashboard") {
+  if (!value || !value.startsWith("/") || value.startsWith("//"))
+    return fallback;
+  try {
+    const target = new URL(value, window.location.origin);
+    if (target.origin !== window.location.origin) return fallback;
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch {
+    return fallback;
+  }
+}
+
 const api = async (url: string, init?: RequestInit) => {
-  const token = localStorage.getItem("token");
-  const r = await fetch(url, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      "x-test-key": "testlab-control",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...init?.headers,
-    },
-  });
+  const headers = new Headers(init?.headers);
+  if (init?.body && !(init.body instanceof FormData))
+    headers.set("content-type", "application/json");
+  const r = await authenticatedFetch(url, { ...init, headers });
   const contentType = r.headers.get("content-type") || "";
   let data: any = null;
   if (r.status !== 204) {
@@ -177,61 +214,12 @@ const api = async (url: string, init?: RequestInit) => {
     }
   }
   if (!r.ok) {
-    if (r.status === 401 && !url.startsWith("/api/auth/")) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("refreshToken");
-      localStorage.removeItem("user");
-      window.location.replace(
-        `/auth/login?reason=session-expired&returnUrl=${encodeURIComponent(location.pathname)}`,
-      );
-    }
     throw Error(data?.error || `HTTP ${r.status}`);
   }
   if (!contentType.includes("application/json") && r.status !== 204)
     throw Error(data.error);
   return data;
 };
-const clearAuthentication = () => {
-  localStorage.removeItem("token");
-  localStorage.removeItem("refreshToken");
-  localStorage.removeItem("user");
-};
-async function validateSession() {
-  const token = localStorage.getItem("token");
-  if (token) {
-    const response = await fetch("/api/auth/session", {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    if (response.ok) {
-      const body = await response.json();
-      localStorage.setItem("user", JSON.stringify(body.user));
-      return body.user;
-    }
-  }
-  const refreshToken = localStorage.getItem("refreshToken");
-  if (refreshToken) {
-    const refreshed = await fetch("/api/auth/refresh", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ refreshToken }),
-    });
-    if (refreshed.ok) {
-      const tokens = await refreshed.json();
-      localStorage.setItem("token", tokens.token);
-      localStorage.setItem("refreshToken", tokens.refreshToken);
-      const session = await fetch("/api/auth/session", {
-        headers: { authorization: `Bearer ${tokens.token}` },
-      });
-      if (session.ok) {
-        const body = await session.json();
-        localStorage.setItem("user", JSON.stringify(body.user));
-        return body.user;
-      }
-    }
-  }
-  clearAuthentication();
-  return null;
-}
 function AuthenticationLoading() {
   return (
     <main className="auth-loading" role="status" aria-live="polite">
@@ -240,48 +228,83 @@ function AuthenticationLoading() {
     </main>
   );
 }
+function AuthenticationError({ message }: { message: string }) {
+  return (
+    <main className="auth-loading" role="alert">
+      <div>
+        <strong>Unable to verify your session</strong>
+        <p>{message}</p>
+        <button onClick={() => window.location.reload()}>Retry</button>
+      </div>
+    </main>
+  );
+}
 function AuthGate({ children }: { children: React.ReactNode }) {
   const loc = useLocation(),
     nav = useNavigate(),
-    [state, setState] = useState<"loading" | "allowed" | "denied">("loading");
+    [state, setState] = useState<"loading" | "allowed" | "denied" | "error">(
+      "loading",
+    ),
+    [error, setError] = useState("");
   useEffect(() => {
     let active = true;
-    const hadSession = Boolean(
-      localStorage.getItem("token") || localStorage.getItem("refreshToken"),
-    );
-    validateSession().then((user) => {
-      if (!active) return;
-      if (user) setState("allowed");
-      else {
-        setState("denied");
-        const reason = hadSession ? "&reason=session-expired" : "";
-        nav(
-          `/auth/login?returnUrl=${encodeURIComponent(loc.pathname + loc.search)}${reason}`,
-          { replace: true },
+    const hadSession = hasAuthenticationHint();
+    validateSession()
+      .then((user) => {
+        if (!active) return;
+        if (user) setState("allowed");
+        else {
+          setState("denied");
+          const reason = hadSession ? "&reason=session-expired" : "";
+          nav(
+            `/auth/login?returnUrl=${encodeURIComponent(loc.pathname + loc.search)}${reason}`,
+            { replace: true },
+          );
+        }
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "The authentication service is unavailable.",
         );
-      }
-    });
+        setState("error");
+      });
     return () => {
       active = false;
     };
   }, []);
   if (state === "loading") return <AuthenticationLoading />;
+  if (state === "error") return <AuthenticationError message={error} />;
   return state === "allowed" ? <>{children}</> : null;
 }
 function PublicGate({ children }: { children: React.ReactNode }) {
   const nav = useNavigate(),
-    [loading, setLoading] = useState(true);
+    [loading, setLoading] = useState(true),
+    [error, setError] = useState("");
   useEffect(() => {
     let active = true;
-    validateSession().then((user) => {
-      if (!active) return;
-      if (user) nav("/dashboard", { replace: true });
-      else setLoading(false);
-    });
+    validateSession()
+      .then((user) => {
+        if (!active) return;
+        if (user) nav("/dashboard", { replace: true });
+        else setLoading(false);
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "The authentication service is unavailable.",
+        );
+        setLoading(false);
+      });
     return () => {
       active = false;
     };
   }, []);
+  if (error) return <AuthenticationError message={error} />;
   return loading ? <AuthenticationLoading /> : <>{children}</>;
 }
 function Info({
@@ -299,18 +322,11 @@ function Info({
 }
 export function Layout() {
   const [open, setOpen] = useState(false);
-  const user = JSON.parse(localStorage.getItem("user") || "null");
+  const user = readStoredUser();
   const logout = async () => {
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          refreshToken: localStorage.getItem("refreshToken"),
-        }),
-      });
+      await logoutSession();
     } finally {
-      clearAuthentication();
       window.location.replace("/auth/login");
     }
   };
@@ -339,7 +355,7 @@ export function Layout() {
           >
             ☰
           </button>
-          <span data-testid="environment">TEST MODE</span>
+          <span data-testid="environment">LOCAL LAB</span>
           <div data-testid="user-menu" className="user-menu">
             <strong>{user?.name}</strong>
             <small>{user?.role}</small>
@@ -373,14 +389,14 @@ export function Layout() {
             <Route path="/files/*" element={<Phase3Files />} />
             <Route path="/dynamic-elements" element={<Phase3Dynamic />} />
             <Route path="/shadow-dom" element={<Phase3ShadowDom />} />
-            <Route path="/storage" element={<Storage />} />
+            <Route path="/storage" element={<Phase5Storage />} />
             <Route path="/api-playground" element={<Phase4Network />} />
             <Route path="/realtime" element={<Phase4Realtime />} />
-            <Route path="/accessibility/*" element={<Accessibility />} />
-            <Route path="/visual" element={<Visual />} />
-            <Route path="/responsive" element={<Responsive />} />
-            <Route path="/i18n" element={<I18n />} />
-            <Route path="/errors" element={<Errors />} />
+            <Route path="/accessibility/*" element={<Phase5Accessibility />} />
+            <Route path="/visual" element={<Phase5Visual />} />
+            <Route path="/responsive" element={<Phase5Responsive />} />
+            <Route path="/i18n" element={<Phase5I18n />} />
+            <Route path="/errors" element={<Phase5Errors />} />
             <Route
               path="/admin"
               element={
@@ -397,7 +413,7 @@ export function Layout() {
                 </Protected>
               }
             />
-            <Route path="*" element={<Errors />} />
+            <Route path="*" element={<Phase5Errors />} />
           </Routes>
         </main>
       </div>
@@ -411,11 +427,29 @@ function AppLayout() {
     [commandOpen, setCommandOpen] = useState(false),
     [query, setQuery] = useState(""),
     [theme, setTheme] = useState(localStorage.getItem("theme") || "system"),
-    user = JSON.parse(localStorage.getItem("user") || "null");
+    [testMode, setTestMode] = useState<boolean | null>(null),
+    user = readStoredUser();
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("theme", theme);
   }, [theme]);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/health", {
+      credentials: "same-origin",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Health check failed");
+        return (await response.json()) as { testMode?: unknown };
+      })
+      .then((health) => setTestMode(health.testMode === true))
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError"))
+          setTestMode(false);
+      });
+    return () => controller.abort();
+  }, []);
   useEffect(() => {
     document.title = `E2E Test Lab — ${loc.pathname === "/dashboard" ? "Automation Practice" : loc.pathname.split("/").filter(Boolean).pop()?.replaceAll("-", " ") || "Dashboard"}`;
   }, [loc.pathname]);
@@ -432,15 +466,8 @@ function AppLayout() {
   }, []);
   const logout = async () => {
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          refreshToken: localStorage.getItem("refreshToken"),
-        }),
-      });
+      await logoutSession();
     } finally {
-      clearAuthentication();
       window.location.replace("/auth/login");
     }
   };
@@ -465,22 +492,27 @@ function AppLayout() {
           </button>
         </div>
         <nav className="sidebar__nav" aria-label="Primary navigation">
-          {navGroups.map((group) => (
-            <section className="nav-group" key={group.label}>
-              <h2>{group.label}</h2>
-              {group.items.map(([name, path, Icon]) => (
-                <NavLink
-                  key={`${name}-${path}`}
-                  to={path}
-                  title={collapsed ? name : undefined}
-                  onClick={() => setOpen(false)}
-                >
-                  <Icon size={17} />
-                  <span>{name}</span>
-                </NavLink>
-              ))}
-            </section>
-          ))}
+          {navGroups.map((group) => {
+            const visibleItems = group.items.filter(
+              ([, path]) => path !== "/test-control" || testMode === true,
+            );
+            return (
+              <section className="nav-group" key={group.label}>
+                <h2>{group.label}</h2>
+                {visibleItems.map(([name, path, Icon]) => (
+                  <NavLink
+                    key={`${name}-${path}`}
+                    to={path}
+                    title={collapsed ? name : undefined}
+                    onClick={() => setOpen(false)}
+                  >
+                    <Icon size={17} />
+                    <span>{name}</span>
+                  </NavLink>
+                ))}
+              </section>
+            );
+          })}
         </nav>
         <div className="sidebar__footer">
           <span className="status-dot" />
@@ -531,9 +563,21 @@ function AppLayout() {
                 <dt>Database</dt>
                 <dd>SQLite</dd>
                 <dt>Test mode</dt>
-                <dd>Enabled</dd>
+                <dd>
+                  {testMode === null
+                    ? "Checking"
+                    : testMode
+                      ? "Enabled"
+                      : "Disabled"}
+                </dd>
                 <dt>Deterministic</dt>
-                <dd>Enabled</dd>
+                <dd>
+                  {testMode === null
+                    ? "Checking"
+                    : testMode
+                      ? "Enabled"
+                      : "Seeded data only"}
+                </dd>
               </dl>
             </div>
           </details>
@@ -608,14 +652,14 @@ function AppLayout() {
             <Route path="/files/*" element={<Phase3Files />} />
             <Route path="/dynamic-elements" element={<Phase3Dynamic />} />
             <Route path="/shadow-dom" element={<Phase3ShadowDom />} />
-            <Route path="/storage" element={<Storage />} />
+            <Route path="/storage" element={<Phase5Storage />} />
             <Route path="/api-playground" element={<Phase4Network />} />
             <Route path="/realtime" element={<Phase4Realtime />} />
-            <Route path="/accessibility/*" element={<Accessibility />} />
-            <Route path="/visual" element={<Visual />} />
-            <Route path="/responsive" element={<Responsive />} />
-            <Route path="/i18n" element={<I18n />} />
-            <Route path="/errors" element={<Errors />} />
+            <Route path="/accessibility/*" element={<Phase5Accessibility />} />
+            <Route path="/visual" element={<Phase5Visual />} />
+            <Route path="/responsive" element={<Phase5Responsive />} />
+            <Route path="/i18n" element={<Phase5I18n />} />
+            <Route path="/errors" element={<Phase5Errors />} />
             <Route
               path="/admin"
               element={
@@ -627,12 +671,18 @@ function AppLayout() {
             <Route
               path="/test-control"
               element={
-                <Protected role="ADMIN">
-                  <TestControl />
-                </Protected>
+                testMode === null ? (
+                  <p role="status">Checking test-control availability…</p>
+                ) : testMode ? (
+                  <Protected role="ADMIN">
+                    <TestControl />
+                  </Protected>
+                ) : (
+                  <Navigate to="/dashboard" replace />
+                )
               }
             />
-            <Route path="*" element={<Errors />} />
+            <Route path="*" element={<Phase5Errors />} />
           </Routes>
         </main>
       </div>
@@ -667,6 +717,7 @@ function AppLayout() {
             </div>
             <div className="command-results">
               {modules
+                .filter(([, path]) => path !== "/test-control" || testMode)
                 .filter(([name, path]) =>
                   `${name} ${path}`.toLowerCase().includes(query.toLowerCase()),
                 )
@@ -784,7 +835,7 @@ const moduleMeta = [
   },
 ];
 function NewDashboard() {
-  const user = JSON.parse(localStorage.getItem("user") || "null"),
+  const user = readStoredUser(),
     [search, setSearch] = useState(""),
     [difficulty, setDifficulty] = useState("All"),
     [view, setView] = useState<"grid" | "list">("grid");
@@ -949,7 +1000,7 @@ function NewDashboard() {
   );
 }
 function Profile() {
-  const user = JSON.parse(localStorage.getItem("user") || "null"),
+  const user = readStoredUser(),
     [tab, setTab] = useState("Profile"),
     [saved, setSaved] = useState("");
   return (
@@ -1055,7 +1106,7 @@ function Profile() {
   );
 }
 export function Dashboard() {
-  const user = JSON.parse(localStorage.getItem("user") || "null");
+  const user = readStoredUser();
   return (
     <div data-testid="dashboard-page">
       <h2>Automation practice modules</h2>
@@ -1128,12 +1179,15 @@ function Protected({
 }) {
   const nav = useNavigate(),
     loc = useLocation(),
-    user = JSON.parse(localStorage.getItem("user") || "null");
+    user = getSessionUser();
   useEffect(() => {
     if (!user)
-      nav(`/auth/login?redirect=${encodeURIComponent(loc.pathname)}`, {
-        replace: true,
-      });
+      nav(
+        `/auth/login?returnUrl=${encodeURIComponent(loc.pathname + loc.search)}`,
+        {
+          replace: true,
+        },
+      );
   }, []);
   if (!user) return <p role="status">Redirecting to login…</p>;
   if (role && user.role !== role)
@@ -1163,9 +1217,21 @@ function Auth() {
   const update = (key: string, value: string | boolean) =>
     set({ ...form, [key]: value });
   const demoAccounts = [
-    { role: "Administrator", email: "admin@testlab.local", password: "Admin123!" },
-    { role: "Standard user", email: "user@testlab.local", password: "User123!" },
-    { role: "Read-only viewer", email: "viewer@testlab.local", password: "Viewer123!" },
+    {
+      role: "Administrator",
+      email: "admin@testlab.local",
+      password: "Admin123!",
+    },
+    {
+      role: "Standard user",
+      email: "user@testlab.local",
+      password: "User123!",
+    },
+    {
+      role: "Read-only viewer",
+      email: "viewer@testlab.local",
+      password: "Viewer123!",
+    },
   ];
   const fillDemoAccount = (email: string, password: string) => {
     set({ ...form, email, password });
@@ -1181,19 +1247,24 @@ function Auth() {
           method: "POST",
           body: JSON.stringify({ ...form, rememberMe: form.remember }),
         });
-        localStorage.setItem("token", x.token);
-        localStorage.setItem("refreshToken", x.refreshToken);
-        localStorage.setItem("user", JSON.stringify(x.user));
+        acceptLogin(x);
         setMsg(`Welcome ${x.user.name}`);
-        const redirect =
-          new URLSearchParams(loc.search).get("returnUrl") || "/dashboard";
+        const redirect = safeReturnUrl(
+          new URLSearchParams(loc.search).get("returnUrl"),
+        );
         window.location.replace(redirect);
       } else if (mode === "register") {
         const x = await api("/api/auth/register", {
           method: "POST",
           body: JSON.stringify(form),
         });
-        setMsg(`${x.message}. Test token: ${x.verificationToken}`);
+        const verificationToken =
+          typeof x.verificationToken === "string"
+            ? x.verificationToken.trim()
+            : "";
+        setMsg(
+          `${x.message}${verificationToken ? `. Test token: ${verificationToken}` : ""}`,
+        );
       } else if (mode === "forgot" || mode === "forgot-password") {
         const x = await api("/api/auth/forgot-password", {
           method: "POST",
@@ -1219,14 +1290,15 @@ function Auth() {
       } else if (mode === "change-password") {
         if (form.password !== form.confirmPassword)
           throw Error("Passwords do not match");
-        const x = await api("/api/auth/change-password", {
+        await api("/api/auth/change-password", {
           method: "POST",
           body: JSON.stringify({
             currentPassword: form.currentPassword,
             newPassword: form.password,
           }),
         });
-        setMsg(x.message);
+        clearAuthentication();
+        window.location.replace("/auth/login?reason=password-changed");
       }
     } catch (error: any) {
       setMsg(error.message);
@@ -1291,6 +1363,12 @@ function Auth() {
           "session-expired" && (
           <div role="alert" className="session-message">
             Your session has expired. Please log in again.
+          </div>
+        )}
+        {new URLSearchParams(loc.search).get("reason") ===
+          "password-changed" && (
+          <div role="status" className="session-message">
+            Password changed successfully. Sign in with your new password.
           </div>
         )}
         <span className="eyebrow">SECURE ACCESS</span>
@@ -1422,7 +1500,11 @@ function Auth() {
             data-testid={mode === "login" ? "login-submit" : "auth-submit"}
             disabled={submitting}
           >
-            {submitting ? "Signing in…" : title[mode] || "Submit"}
+            {submitting
+              ? mode === "login"
+                ? "Signing in…"
+                : "Submitting…"
+              : title[mode] || "Submit"}
           </button>
           <output
             role="alert"
@@ -1432,7 +1514,10 @@ function Auth() {
           </output>
         </form>
         {mode === "login" && (
-          <section className="demo-accounts" aria-labelledby="demo-logins-title">
+          <section
+            className="demo-accounts"
+            aria-labelledby="demo-logins-title"
+          >
             <div className="demo-accounts__heading">
               <strong id="demo-logins-title">Demo logins</strong>
               <span>Click an account to fill the form</span>
@@ -1444,7 +1529,9 @@ function Auth() {
                   type="button"
                   className="demo-account"
                   data-testid={`demo-${account.email.split("@")[0]}`}
-                  onClick={() => fillDemoAccount(account.email, account.password)}
+                  onClick={() =>
+                    fillDemoAccount(account.email, account.password)
+                  }
                 >
                   <span>
                     <strong>{account.role}</strong>
@@ -1601,7 +1688,7 @@ export function Interactions() {
           ★
         </button>
         <a href="#event-log">Scroll to log</a>
-        <a target="_blank" href="/visual">
+        <a target="_blank" rel="noreferrer noopener" href="/visual">
           New tab
         </a>
         <input
@@ -1720,20 +1807,18 @@ export function Tables() {
     [sort, setSort] = useState<"id" | "name">("id"),
     [q, setQ] = useState("");
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (token)
+    const fallbackRows = () =>
+      Array.from({ length: 100 }, (_, i) => ({
+        id: i + 1,
+        name: `QA User ${String(i + 1).padStart(3, "0")}`,
+        email: `qa.user${String(i + 1).padStart(3, "0")}@testlab.local`,
+        status: "ACTIVE",
+      }));
+    if (getSessionUser())
       api("/api/users?size=100")
         .then((x) => setRows(x.data))
-        .catch(() => {});
-    else
-      setRows(
-        Array.from({ length: 100 }, (_, i) => ({
-          id: i + 1,
-          name: `QA User ${String(i + 1).padStart(3, "0")}`,
-          email: `qa.user${String(i + 1).padStart(3, "0")}@testlab.local`,
-          status: "ACTIVE",
-        })),
-      );
+        .catch(() => setRows(fallbackRows()));
+    else setRows(fallbackRows());
   }, []);
   const shown = rows
     .filter((x) => x.name.toLowerCase().includes(q.toLowerCase()))
@@ -1869,7 +1954,7 @@ export function Files() {
   const [msg, setMsg] = useState("");
   const send = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const r = await fetch("/api/files/upload", {
+    const r = await authenticatedFetch("/api/files/upload", {
       method: "POST",
       body: new FormData(e.currentTarget),
     });
@@ -1962,6 +2047,7 @@ export function Shadow() {
     </>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Storage() {
   const [v, setV] = useState(
     () => localStorage.getItem("lab-preference") || "unset",
@@ -2020,9 +2106,10 @@ function ApiPlay() {
   const [code, setCode] = useState(200),
     [out, setOut] = useState("");
   const go = () =>
-    fetch(`/api/status/${code}`).then(async (r) =>
-      setOut(`${r.status} ${await r.text()}`),
-    );
+    authenticatedFetch(`/api/status/${code}`, undefined, {
+      retryOnUnauthorized: false,
+      redirectOnUnauthorized: false,
+    }).then(async (r) => setOut(`${r.status} ${await r.text()}`));
   return (
     <>
       <h2>API & network playground</h2>
@@ -2038,7 +2125,7 @@ function ApiPlay() {
       </label>
       <button onClick={go}>Send request</button>
       <pre role="status">{out}</pre>
-      <a href="/api/docs" target="_blank">
+      <a href="/api/docs" target="_blank" rel="noreferrer noopener">
         Open interactive API documentation
       </a>
       <Info
@@ -2052,13 +2139,18 @@ function ApiPlay() {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Realtime() {
   const [events, setEvents] = useState<string[]>([]),
-    [message, setMessage] = useState("Hello automation");
+    [message, setMessage] = useState("Hello automation"),
+    socket = React.useRef<ReturnType<typeof createAuthenticatedSocket> | null>(
+      null,
+    );
   useEffect(() => {
-    const s = io();
+    const s = createAuthenticatedSocket();
+    socket.current = s;
     s.on("status", (x) => setEvents((v) => [`Connected ${x.id}`, ...v]));
     s.on("chat", (x) => setEvents((v) => [x.text, ...v]));
     s.on("test-event", (x) => setEvents((v) => [JSON.stringify(x), ...v]));
     return () => {
+      socket.current = null;
       s.close();
     };
   }, []);
@@ -2070,7 +2162,7 @@ function Realtime() {
         value={message}
         onChange={(e) => setMessage(e.target.value)}
       />
-      <button onClick={() => io().emit("chat", { text: message })}>
+      <button onClick={() => socket.current?.emit("chat", { text: message })}>
         Send chat
       </button>
       <ul>
@@ -2086,6 +2178,7 @@ function Realtime() {
     </>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Accessibility() {
   return (
     <>
@@ -2113,6 +2206,7 @@ function Accessibility() {
     </>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Visual() {
   const freeze = new URLSearchParams(location.search).get("freeze") === "true";
   return (
@@ -2141,6 +2235,7 @@ function Visual() {
     </>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Responsive() {
   const [size, setSize] = useState([innerWidth, innerHeight]);
   useEffect(() => {
@@ -2164,6 +2259,7 @@ function Responsive() {
     </>
   );
 }
+// Kept temporarily for compatibility with older saved bundles.
 const translations: any = {
   en: ["Internationalization", "Hello"],
   es: ["Internacionalización", "Hola"],
@@ -2171,6 +2267,7 @@ const translations: any = {
   hi: ["अंतर्राष्ट्रीयकरण", "नमस्ते"],
   ar: ["التدويل", "مرحباً"],
 };
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function I18n() {
   const [lang, setLang] = useState(localStorage.getItem("lang") || "en");
   const change = (x: string) => {
@@ -2207,6 +2304,7 @@ function I18n() {
     </div>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Errors() {
   const [out, setOut] = useState("");
   return (
@@ -2217,9 +2315,10 @@ function Errors() {
           <button
             key={c}
             onClick={() =>
-              fetch(`/api/status/${c}`).then(async (r) =>
-                setOut(await r.text()),
-              )
+              authenticatedFetch(`/api/status/${c}`, undefined, {
+                retryOnUnauthorized: false,
+                redirectOnUnauthorized: false,
+              }).then(async (r) => setOut(await r.text()))
             }
           >
             {c}
@@ -2240,7 +2339,7 @@ function Errors() {
 }
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Admin() {
-  const u = JSON.parse(localStorage.getItem("user") || "null");
+  const u = readStoredUser();
   if (u?.role !== "ADMIN")
     return (
       <>
@@ -2278,21 +2377,44 @@ function Admin() {
   );
 }
 function TestControl() {
+  const testControlKey = import.meta.env.VITE_TEST_CONTROL_KEY?.trim();
   const [state, setState] = useState("Ready"),
-    act = (name: string, body = {}) =>
-      api(`/api/test/${name}`, { method: "POST", body: JSON.stringify(body) })
+    act = (name: string, body = {}) => {
+      const headers = new Headers();
+      if (testControlKey) headers.set("x-test-key", testControlKey);
+      return api(`/api/test/${name}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      })
         .then((x) => setState(JSON.stringify(x)))
         .catch((e) => setState(e.message));
+    };
+  const clearBrowserState = () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    setState("Browser storage cleared; cookie authentication preserved");
+  };
   return (
     <>
-      <h2>Test Control Center</h2>
+      <h1>Test Control Center</h1>
       <div className="panel actions">
         <button onClick={() => act("reset")}>Reset database</button>
         <button onClick={() => act("seed")}>Seed database</button>
         <button onClick={() => act("clock", { at: "2026-01-15T12:00:00Z" })}>
           Freeze clock
         </button>
-        <button onClick={() => act("network", { delay: 1000, failureRate: 0 })}>
+        <button
+          onClick={() =>
+            act("network", {
+              delay: 1000,
+              failureRate: 0,
+              offline: false,
+              statusCode: null,
+              rateLimit: 10,
+            })
+          }
+        >
           Configure network
         </button>
         <button
@@ -2302,15 +2424,7 @@ function TestControl() {
         >
           Trigger WebSocket
         </button>
-        <button
-          onClick={() => {
-            localStorage.clear();
-            sessionStorage.clear();
-            setState("Browser storage cleared");
-          }}
-        >
-          Clear browser state
-        </button>
+        <button onClick={clearBrowserState}>Clear browser state</button>
       </div>
       <pre role="status">{state}</pre>
       <Info
