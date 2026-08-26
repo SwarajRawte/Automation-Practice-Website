@@ -1,0 +1,1 @@
+Deterministic Selenium TestNG upload fixture.

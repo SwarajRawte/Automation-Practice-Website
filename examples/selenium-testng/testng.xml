@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="E2E Test Lab live suite"
+       parallel="classes"
+       thread-count="4"
+       data-provider-thread-count="1"
+       preserve-order="true"
+       verbose="2">
+  <listeners>
+    <listener class-name="com.testlab.listeners.LiveSuiteListener"/>
+    <listener class-name="com.testlab.listeners.ScreenshotListener"/>
+  </listeners>
+  <test name="Selenium and API scenarios">
+    <groups>
+      <run>
+        <include name="live"/>
+      </run>
+    </groups>
+    <classes>
+      <class name="com.testlab.tests.AuthenticationAndRbacTest"/>
+      <class name="com.testlab.tests.FormsAndWaitsTest"/>
+      <class name="com.testlab.tests.ActionsAndContextsTest"/>
+      <class name="com.testlab.tests.FileTransferTest"/>
+      <class name="com.testlab.tests.ApiFlowTest"/>
+    </classes>
+  </test>
+</suite>
