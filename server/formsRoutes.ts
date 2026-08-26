@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "./db.js";
 import type { AuthRequest } from "./types.js";
 import { roles } from "./auth.js";
+import { nowIso } from "./clock.js";
 
 export const formsRouter = Router();
 
@@ -63,7 +64,7 @@ formsRouter.post("/forms", roles("ADMIN", "USER"), (req: AuthRequest, res) => {
       .prepare(
         "INSERT INTO form_submissions(user_id,data,created_at) VALUES(?,?,?)",
       )
-      .run(req.user.id, JSON.stringify(safeBody), new Date().toISOString())
+      .run(req.user.id, JSON.stringify(safeBody), nowIso())
       .lastInsertRowid,
   );
   return res

@@ -4,6 +4,8 @@ import crypto from "node:crypto";
 import { db } from "./db.js";
 import { roles } from "./auth.js";
 import type { AuthRequest } from "./types.js";
+import { nowIso } from "./clock.js";
+import { resumeTestRunContext } from "./runContext.js";
 export const phase3Router = Router();
 const positiveInteger = (value: unknown, fallback: number, maximum: number) => {
     const parsed = Number(value);
@@ -123,7 +125,7 @@ const history = (id: number, action: string, snapshot: unknown) =>
     .prepare(
       "INSERT INTO product_history(product_id,action,snapshot,created_at) VALUES(?,?,?,?)",
     )
-    .run(id, action, JSON.stringify(snapshot), new Date().toISOString());
+    .run(id, action, JSON.stringify(snapshot), nowIso());
 phase3Router.get("/products", (req, res) => {
   const page = positiveInteger(req.query.page, 1, 1_000_000),
     size = positiveInteger(req.query.size, 10, 100),
@@ -183,7 +185,7 @@ phase3Router.post("/products", roles("ADMIN"), (req: AuthRequest, res) => {
           values.price,
           values.inventory,
           values.inventory === 0 ? "OUT_OF_STOCK" : values.status,
-          new Date().toISOString(),
+          nowIso(),
         ),
       product = productById(Number(result.lastInsertRowid));
     history(product.id, "CREATED", product);
@@ -217,7 +219,7 @@ phase3Router.put("/products/:id", roles("ADMIN"), (req, res) => {
       values.price,
       values.inventory,
       values.inventory === 0 ? "OUT_OF_STOCK" : values.status,
-      new Date().toISOString(),
+      nowIso(),
       current.id,
     );
     const updated = productById(current.id);
@@ -244,7 +246,7 @@ phase3Router.post("/products/:id/duplicate", roles("ADMIN"), (req, res) => {
         current.price,
         current.inventory,
         current.status,
-        new Date().toISOString(),
+        nowIso(),
       ),
     copy = productById(Number(result.lastInsertRowid));
   history(copy.id, "DUPLICATED", { sourceId: current.id, ...copy });
@@ -255,7 +257,7 @@ phase3Router.delete("/products/:id", roles("ADMIN"), (req, res) => {
   if (!current) return res.status(404).json({ error: "Product not found" });
   db.prepare(
     "UPDATE products SET deleted_at=?,version=version+1 WHERE id=?",
-  ).run(new Date().toISOString(), current.id);
+  ).run(nowIso(), current.id);
   history(current.id, "DELETED", current);
   res.json({
     message: "Product deleted",
@@ -273,7 +275,7 @@ phase3Router.post("/products/:id/undo", roles("ADMIN"), (req, res) => {
     return res.status(409).json({ error: "Product is not deleted" });
   db.prepare(
     "UPDATE products SET deleted_at=NULL,version=version+1,updated_at=? WHERE id=? AND deleted_at IS NOT NULL",
-  ).run(new Date().toISOString(), String(req.params.id));
+  ).run(nowIso(), String(req.params.id));
   const product = productById(String(req.params.id));
   if (!product) return res.status(404).json({ error: "Product not found" });
   history(product.id, "RESTORED", product);
@@ -309,6 +311,7 @@ phase3Router.post(
   "/products/:id/image",
   roles("ADMIN"),
   imageUpload.single("image"),
+  resumeTestRunContext,
   (req, res) => {
     const product = productById(String(req.params.id));
     if (!product) return res.status(404).json({ error: "Product not found" });
@@ -343,13 +346,13 @@ phase3Router.post(
           req.file.mimetype,
           digest,
           req.file.buffer,
-          new Date().toISOString(),
+          nowIso(),
         );
       file = { id: Number(result.lastInsertRowid) };
     }
     db.prepare(
       "UPDATE products SET image_file_id=?,version=version+1,updated_at=? WHERE id=?",
-    ).run(file.id, new Date().toISOString(), product.id);
+    ).run(file.id, nowIso(), product.id);
     const updated = productById(product.id);
     history(product.id, "IMAGE_UPDATED", updated);
     return res.json(updated);
@@ -370,6 +373,7 @@ phase3Router.post(
   "/files/upload",
   roles("ADMIN", "USER"),
   upload.array("files", 5),
+  resumeTestRunContext,
   (req, res, next) => {
     if (req.query.fail === "true")
       return res.status(503).json({ error: "Simulated upload failure" });
@@ -432,7 +436,7 @@ phase3Router.post(
             file.mimetype,
             digest,
             file.buffer,
-            new Date().toISOString(),
+            nowIso(),
           );
         results.push({
           id: Number(result.lastInsertRowid),
@@ -480,16 +484,21 @@ phase3Router.delete(
     return res.status(204).end();
   },
 );
-phase3Router.post("/files/process-csv", upload.single("file"), (req, res) => {
-  if (!req.file || req.file.mimetype !== "text/csv")
-    return res.status(415).json({ error: "CSV file required" });
-  const lines = req.file.buffer.toString("utf8").trim().split(/\r?\n/);
-  res.json({
-    headers: lines[0]?.split(",") || [],
-    rows: Math.max(0, lines.length - 1),
-    preview: lines.slice(1, 4).map((line) => line.split(",")),
-  });
-});
+phase3Router.post(
+  "/files/process-csv",
+  upload.single("file"),
+  resumeTestRunContext,
+  (req, res) => {
+    if (!req.file || req.file.mimetype !== "text/csv")
+      return res.status(415).json({ error: "CSV file required" });
+    const lines = req.file.buffer.toString("utf8").trim().split(/\r?\n/);
+    return res.json({
+      headers: lines[0]?.split(",") || [],
+      rows: Math.max(0, lines.length - 1),
+      preview: lines.slice(1, 4).map((line) => line.split(",")),
+    });
+  },
+);
 phase3Router.get("/files/download/:type", (req, res) => {
   const type = String(req.params.type);
   if (type === "failed")

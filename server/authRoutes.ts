@@ -12,6 +12,8 @@ import {
 import type { AuthRequest, Claims, Role } from "./types.js";
 import { disconnectUserSockets } from "./realtime.js";
 import { privateNoStore } from "./security.js";
+import { nowIso, nowMs } from "./clock.js";
+import { authRateBuckets, resetAuthRateBuckets } from "./runContext.js";
 export const authRouter = Router();
 authRouter.use(privateNoStore);
 const isTestMode = () => process.env.TEST_MODE === "true",
@@ -21,11 +23,7 @@ const isTestMode = () => process.env.TEST_MODE === "true",
       ? configuredMaxAttempts
       : 5;
 const maxPasswordBytes = 72;
-const authRateBuckets = new Map<
-  string,
-  { count: number; windowStarted: number }
->();
-export const resetAuthRateLimits = () => authRateBuckets.clear();
+export const resetAuthRateLimits = resetAuthRateBuckets;
 const publicAuthThrottle =
   (operation: string): RequestHandler =>
   (req, res, next) => {
@@ -34,11 +32,14 @@ const publicAuthThrottle =
         Number.isInteger(configuredLimit) && configuredLimit >= 10
           ? configuredLimit
           : 40,
-      now = Date.now(),
+      now = nowMs(),
       key = `${operation}:${req.ip || req.socket.remoteAddress || "unknown"}`,
-      existing = authRateBuckets.get(key),
+      buckets = authRateBuckets(),
+      existing = buckets.get(key),
       bucket =
-        !existing || now - existing.windowStarted >= 60_000
+        !existing ||
+        now < existing.windowStarted ||
+        now - existing.windowStarted >= 60_000
           ? { count: 0, windowStarted: now }
           : existing;
     if (bucket.count >= limit) {
@@ -52,11 +53,10 @@ const publicAuthThrottle =
       });
     }
     bucket.count += 1;
-    authRateBuckets.set(key, bucket);
-    if (authRateBuckets.size > 1_000)
-      for (const [bucketKey, value] of authRateBuckets)
-        if (now - value.windowStarted >= 60_000)
-          authRateBuckets.delete(bucketKey);
+    buckets.set(key, bucket);
+    if (buckets.size > 1_000)
+      for (const [bucketKey, value] of buckets)
+        if (now - value.windowStarted >= 60_000) buckets.delete(bucketKey);
     return next();
   };
 const dummyPasswordHash = bcrypt.hashSync("InvalidPassword123!", 10),
@@ -101,7 +101,7 @@ const publicUser = (u: any) => ({
 const audit = (action: string, detail: unknown) =>
   db
     .prepare("INSERT INTO audit(action,detail,created_at) VALUES(?,?,?)")
-    .run(action, JSON.stringify(detail), new Date().toISOString());
+    .run(action, JSON.stringify(detail), nowIso());
 function issueToken(
   userId: number,
   type: "refresh" | "verify" | "reset",
@@ -117,7 +117,7 @@ function issueToken(
   if (type === "refresh") {
     db.prepare(
       "DELETE FROM auth_tokens WHERE type='refresh' AND expires_at<=?",
-    ).run(new Date().toISOString());
+    ).run(nowIso());
     db.prepare(
       "UPDATE auth_tokens SET revoked=1 WHERE user_id=? AND type='refresh'",
     ).run(userId);
@@ -133,9 +133,9 @@ function issueToken(
     userId,
     type,
     hash(plain),
-    new Date(Date.now() + hours * 3600000).toISOString(),
+    new Date(nowMs() + hours * 3600000).toISOString(),
     type === "refresh" && hours > 24 ? 1 : 0,
-    new Date().toISOString(),
+    nowIso(),
   );
   return plain;
 }
@@ -145,7 +145,12 @@ function lookupToken(token: string, type: string) {
       "SELECT t.*,u.email,u.name,u.role,u.verified,u.locked,u.session_version FROM auth_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.type=? AND t.revoked=0",
     )
     .get(hash(token), type) as any;
-  if (!row || Date.parse(row.expires_at) <= Date.now()) return null;
+  if (
+    !row ||
+    Date.parse(row.created_at) > nowMs() ||
+    Date.parse(row.expires_at) <= nowMs()
+  )
+    return null;
   return row;
 }
 function consumeToken(token: string, type: string) {
@@ -414,8 +419,7 @@ authRouter.post("/logout", (req, res) => {
           .prepare(
             "SELECT user_id FROM auth_tokens WHERE token_hash=? AND type='refresh' AND expires_at>?",
           )
-          .get(hash(refreshToken), new Date().toISOString()) as
-          { user_id: number } | undefined)
+          .get(hash(refreshToken), nowIso()) as { user_id: number } | undefined)
       : undefined;
   // Prefer the authenticated access session. A stale or attacker-supplied
   // refresh value must not make logout silently skip server-side revocation.
@@ -461,7 +465,7 @@ authRouter.post("/reset-password", async (req, res) => {
         .prepare(
           "UPDATE auth_tokens SET revoked=1 WHERE id=? AND revoked=0 AND expires_at>?",
         )
-        .run(row.id, new Date().toISOString()),
+        .run(row.id, nowIso()),
       updated =
         getAuthEpoch() === authEpoch
           ? db
