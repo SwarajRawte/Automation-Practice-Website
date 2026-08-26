@@ -77,3 +77,21 @@ test("shutdown enforces its deadline", async () => {
   await result;
   assert.deepEqual(exits, [1]);
 });
+
+test("shutdown supports numeric browser-style timer handles", async () => {
+  let cancelled: ReturnType<typeof setTimeout> | undefined;
+  const numericHandle = 42 as unknown as ReturnType<typeof setTimeout>,
+    shutdown = createShutdownHandler({
+      closeNetwork: async () => undefined,
+      closeResources: () => undefined,
+      exit: () => undefined,
+      log: () => undefined,
+      scheduleTimeout: () => numericHandle,
+      cancelTimeout: (handle) => {
+        cancelled = handle;
+      },
+    });
+
+  await shutdown("SIGTERM");
+  assert.equal(cancelled, numericHandle);
+});

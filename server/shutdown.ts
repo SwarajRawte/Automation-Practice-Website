@@ -19,13 +19,19 @@ type ShutdownOptions = {
 };
 
 const defaultLog = (event: ShutdownEvent) => console.info(JSON.stringify(event));
+const defaultScheduleTimeout: NonNullable<ShutdownOptions["scheduleTimeout"]> = (
+  callback,
+  milliseconds,
+) => setTimeout(callback, milliseconds);
+const defaultCancelTimeout: NonNullable<ShutdownOptions["cancelTimeout"]> = (handle) =>
+  clearTimeout(handle);
 
 export function createShutdownHandler(options: ShutdownOptions) {
   const timeoutMs = options.timeoutMs ?? 10_000,
     exit = options.exit || ((code: number) => process.exit(code)),
     log = options.log || defaultLog,
-    scheduleTimeout = options.scheduleTimeout || setTimeout,
-    cancelTimeout = options.cancelTimeout || clearTimeout;
+    scheduleTimeout = options.scheduleTimeout || defaultScheduleTimeout,
+    cancelTimeout = options.cancelTimeout || defaultCancelTimeout;
   let inFlight: Promise<void> | undefined;
 
   return (signal: ShutdownSignal) => {
@@ -38,7 +44,13 @@ export function createShutdownHandler(options: ShutdownOptions) {
         log({ event: "shutdown_forced", signal });
         exit(1);
       }, timeoutMs);
-      forceTimer.unref?.();
+      if (
+        typeof forceTimer === "object" &&
+        forceTimer !== null &&
+        "unref" in forceTimer &&
+        typeof forceTimer.unref === "function"
+      )
+        forceTimer.unref();
 
       let failure: unknown;
       try {
