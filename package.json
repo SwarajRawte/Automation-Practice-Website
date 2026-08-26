@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"node --env-file-if-exists=.env --import=tsx --watch server/index.ts\" \"vite\"",
+    "dev:origin": "node --env-file-if-exists=.env --import=tsx --watch server/secondOrigin.ts",
+    "dev:all": "concurrently \"node --env-file-if-exists=.env --import=tsx --watch server/index.ts\" \"vite\" \"node --env-file-if-exists=.env --import=tsx --watch server/secondOrigin.ts\"",
     "build": "tsc -b && vite build",
     "start": "node --env-file-if-exists=.env --import=tsx server/index.ts",
     "test": "node --import=tsx --import=./server/testSetup.ts --test --test-concurrency=1 server/**/*.test.ts",

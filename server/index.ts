@@ -3,13 +3,18 @@ import cors from "cors";
 import helmet from "helmet";
 import path from "node:path";
 import fs from "node:fs";
-import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
 import swagger from "swagger-ui-express";
-import { db, reset, seed } from "./db.js";
-import { auth, authenticateSocket, roles } from "./auth.js";
+import {
+  closeDefaultDatabase,
+  db,
+  probeDefaultDatabase,
+  reset,
+  seed,
+} from "./db.js";
+import { auth, authenticateSocket, roles, runRoom } from "./auth.js";
 import { spec } from "./openapi.js";
 import { authRouter } from "./authRoutes.js";
 import { formsRouter } from "./formsRoutes.js";
@@ -17,6 +22,7 @@ import { phase3Router } from "./phase3Routes.js";
 import {
   createPhase4Router,
   networkConfig,
+  resetNetworkConfig,
   updateNetworkConfig,
 } from "./phase4Routes.js";
 import { testControlGuard } from "./testControl.js";
@@ -34,7 +40,22 @@ import {
   disconnectUserSockets,
   registerSocketHandlers,
 } from "./realtime.js";
-import { healthPayload } from "./health.js";
+import { createHealthRouter } from "./health.js";
+import { clockRouter } from "./clockRoutes.js";
+import { resetAuthRateLimits } from "./authRoutes.js";
+import { createAdvancedLabRouter } from "./advancedLabRoutes.js";
+import {
+  clearAllTestRuns,
+  testRunContextMiddleware,
+  testRunLifecycleRouter,
+  testStateRouter,
+} from "./testRuns.js";
+import { createContentSecurityPolicy } from "./contentSecurityPolicy.js";
+import { requestObservability } from "./observability.js";
+import {
+  createShutdownHandler,
+  registerShutdownSignals,
+} from "./shutdown.js";
 const productionSecret = process.env.JWT_SECRET?.trim() || "";
 if (
   process.env.NODE_ENV === "production" &&
@@ -60,22 +81,28 @@ const app = express(),
 io.use(authenticateSocket);
 bindSocketRevocations(io);
 registerSocketHandlers(io);
-// The application contains intentional srcDoc/inline-event automation labs and
-// Swagger UI. Keep Helmet's remaining protections while leaving CSP to a future
-// nonce-based policy that can explicitly support those exercises.
 app.use(helmet({ contentSecurityPolicy: false }));
+app.use(createContentSecurityPolicy());
 app.use(cors(corsOptions));
-app.use((q, r, n) => {
-  r.set("x-request-id", `req-${randomUUID()}`);
-  n();
-});
+app.use(requestObservability());
 app.use(unsafeRequestOriginGuard(allowedOrigins));
 app.use(express.json());
-app.get("/api/health", (_q, r) => r.json(healthPayload()));
+// Probes intentionally bypass run selection and authentication so a stale
+// browser cookie cannot turn process health into a run-scoped response.
+app.use(createHealthRouter(probeDefaultDatabase));
+// Run creation is key-only because no isolated actor exists until this call.
+// Every subsequent request is bound before authentication and route handling.
+app.use("/api/test/runs", testRunLifecycleRouter);
+app.use(testRunContextMiddleware);
 app.use("/api/docs", swagger.serve, swagger.setup(spec));
 app.use("/api/auth", authRouter);
+// Clock controls use a short wall-time control claim so a large logical jump
+// cannot make the unfreeze endpoint unreachable.
+app.use("/api", clockRouter);
 app.use("/api", auth);
 app.use("/api", privateNoStore);
+app.use("/api", createAdvancedLabRouter());
+app.use("/api", testStateRouter);
 app.use("/api", formsRouter);
 app.use("/api", phase3Router);
 app.use("/api", createPhase4Router(io));
@@ -135,6 +162,8 @@ app.get("/api/delay/:ms", (q, r) => {
 });
 app.post("/api/test/reset", testControlGuard, (_q, r) => {
   reset();
+  resetAuthRateLimits();
+  resetNetworkConfig();
   disconnectAllSockets();
   r.json({ message: "Database reset" });
 });
@@ -143,9 +172,6 @@ app.post("/api/test/seed", testControlGuard, (_q, r) => {
   disconnectAllSockets();
   r.json({ message: "Database seeded" });
 });
-app.post("/api/test/clock", testControlGuard, (q, r) =>
-  r.json({ clock: q.body }),
-);
 app.post("/api/test/network", testControlGuard, (q, r) => {
   const error = updateNetworkConfig(q.body);
   return error
@@ -153,7 +179,7 @@ app.post("/api/test/network", testControlGuard, (q, r) => {
     : r.json({ network: networkConfig });
 });
 app.post("/api/test/events", testControlGuard, (q, r) => {
-  io.emit("test-event", q.body);
+  io.to(runRoom()).emit("test-event", q.body);
   r.json({ sent: true });
 });
 app.post("/api/test/users/:id/lock", testControlGuard, (q, r) => {
@@ -211,5 +237,26 @@ if (fs.existsSync(dist)) {
 const port = Number(process.env.PORT || 3100),
   host = process.env.HOST?.trim() || "127.0.0.1";
 server.listen(port, host, () =>
-  console.log(`E2E Test Lab API ready at http://${host}:${port}`),
+  console.info(JSON.stringify({ event: "server_ready", host, port })),
 );
+
+const requestedShutdownTimeout = Number(process.env.SHUTDOWN_TIMEOUT_MS),
+  shutdownTimeout =
+    Number.isInteger(requestedShutdownTimeout) &&
+    requestedShutdownTimeout >= 1_000 &&
+    requestedShutdownTimeout <= 30_000
+      ? requestedShutdownTimeout
+      : 10_000,
+  shutdown = createShutdownHandler({
+    timeoutMs: shutdownTimeout,
+    closeNetwork: () =>
+      new Promise<void>((resolve) => {
+        // Socket.IO owns the HTTP server and closes both listeners and clients.
+        io.close(() => resolve());
+      }),
+    closeResources: () => {
+      clearAllTestRuns();
+      closeDefaultDatabase();
+    },
+  });
+registerShutdownSignals(shutdown);

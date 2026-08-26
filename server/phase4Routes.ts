@@ -3,6 +3,8 @@ import type { Server } from "socket.io";
 import { db } from "./db.js";
 import type { AuthRequest } from "./types.js";
 import { roles, userRoom } from "./auth.js";
+import { nowIso, nowMs } from "./clock.js";
+import { createNetworkState, currentTestRun } from "./runContext.js";
 
 export type NetworkConfig = {
   delay: number;
@@ -12,16 +14,22 @@ export type NetworkConfig = {
   rateLimit: number;
 };
 
-export const networkConfig: NetworkConfig = {
-  delay: 0,
-  failureRate: 0,
-  offline: false,
-  statusCode: null,
-  rateLimit: 10,
-};
-let failureAccumulator = 0,
-  rateWindowStarted = Date.now(),
-  rateWindowRequests = 0;
+const defaultNetworkState = createNetworkState();
+const networkState = () => currentTestRun()?.network || defaultNetworkState;
+export const networkConfig = new Proxy(defaultNetworkState.config, {
+  get(_target, property) {
+    return Reflect.get(networkState().config, property);
+  },
+  set(_target, property, value) {
+    return Reflect.set(networkState().config, property, value);
+  },
+  ownKeys() {
+    return Reflect.ownKeys(networkState().config);
+  },
+  getOwnPropertyDescriptor(_target, property) {
+    return Reflect.getOwnPropertyDescriptor(networkState().config, property);
+  },
+}) as NetworkConfig;
 
 const wait = (ms: number) =>
     new Promise((resolve) => setTimeout(resolve, Math.max(0, ms))),
@@ -64,10 +72,20 @@ export function updateNetworkConfig(input: unknown): string | null {
     next.rateLimit = rateLimit;
   }
   Object.assign(networkConfig, next);
-  failureAccumulator = 0;
-  rateWindowStarted = Date.now();
-  rateWindowRequests = 0;
+  const state = networkState();
+  state.failureAccumulator = 0;
+  state.rateWindowStarted = nowMs();
+  state.rateWindowRequests = 0;
   return null;
+}
+
+export function resetNetworkConfig() {
+  const state = networkState(),
+    fresh = createNetworkState();
+  Object.assign(state.config, fresh.config);
+  state.failureAccumulator = 0;
+  state.rateWindowStarted = nowMs();
+  state.rateWindowRequests = 0;
 }
 
 type CheckoutItem = {
@@ -163,7 +181,7 @@ export function createPhase4Router(io?: Server) {
         .prepare(
           "INSERT OR IGNORE INTO wishlists(user_id,product_id,created_at) VALUES(?,?,?)",
         )
-        .run(req.user!.id, productId, new Date().toISOString());
+        .run(req.user!.id, productId, nowIso());
       return res.status(result.changes ? 201 : 200).json({
         added: Boolean(result.changes),
         productId,
@@ -310,8 +328,7 @@ export function createPhase4Router(io?: Server) {
               .prepare(
                 "INSERT INTO orders(user_id,status,total,created_at) VALUES(?,?,?,?)",
               )
-              .run(req.user!.id, "CONFIRMED", total, new Date().toISOString())
-              .lastInsertRowid,
+              .run(req.user!.id, "CONFIRMED", total, nowIso()).lastInsertRowid,
           );
         for (const item of rows) {
           db.prepare(
@@ -324,7 +341,7 @@ export function createPhase4Router(io?: Server) {
             .run(
               item.quantity,
               item.quantity,
-              new Date().toISOString(),
+              nowIso(),
               item.id,
               item.quantity,
             );
@@ -433,7 +450,7 @@ export function createPhase4Router(io?: Server) {
           for (const item of items)
             db.prepare(
               "UPDATE products SET inventory=inventory+?,status=CASE WHEN status='OUT_OF_STOCK' THEN 'ACTIVE' ELSE status END,version=version+1,updated_at=? WHERE id=?",
-            ).run(item.quantity, new Date().toISOString(), item.product_id);
+            ).run(item.quantity, nowIso(), item.product_id);
         }
         db.exec("COMMIT");
       } catch (error) {
@@ -458,13 +475,17 @@ export function createPhase4Router(io?: Server) {
     return error ? res.status(422).json({ error }) : res.json(networkConfig);
   });
   router.all("/network/echo", async (req, res) => {
-    const now = Date.now();
-    if (now - rateWindowStarted >= 1_000) {
-      rateWindowStarted = now;
-      rateWindowRequests = 0;
+    const now = nowMs(),
+      state = networkState();
+    if (
+      now < state.rateWindowStarted ||
+      now - state.rateWindowStarted >= 1_000
+    ) {
+      state.rateWindowStarted = now;
+      state.rateWindowRequests = 0;
     }
-    rateWindowRequests += 1;
-    if (rateWindowRequests > networkConfig.rateLimit)
+    state.rateWindowRequests += 1;
+    if (state.rateWindowRequests > networkConfig.rateLimit)
       return res.status(429).json({
         error: "Simulated rate limit exceeded",
         code: "RATE_LIMITED",
@@ -477,9 +498,9 @@ export function createPhase4Router(io?: Server) {
         simulated: true,
         status: networkConfig.statusCode,
       });
-    failureAccumulator += networkConfig.failureRate;
-    if (failureAccumulator >= 1) {
-      failureAccumulator -= 1;
+    state.failureAccumulator += networkConfig.failureRate;
+    if (state.failureAccumulator >= 1) {
+      state.failureAccumulator -= 1;
       return res.status(503).json({
         error: "Simulated network failure",
         code: "SIMULATED_FAILURE",

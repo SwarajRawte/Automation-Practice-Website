@@ -14,6 +14,7 @@ import { authRouter } from "./authRoutes.js";
 import { db, reset } from "./db.js";
 import { bindSocketRevocations, registerSocketHandlers } from "./realtime.js";
 import { createCorsOptions, requestOriginAllowed } from "./security.js";
+import { freezeClock } from "./clock.js";
 
 beforeEach(() => {
   process.env.TEST_MODE = "true";
@@ -163,6 +164,23 @@ test("socket lifetime is bounded by JWT expiry", async () => {
     });
     await event(client, "connect");
     await event(client, "disconnect", 4_000);
+    assert.equal(client.connected, false);
+  } finally {
+    await server.close();
+  }
+});
+
+test("logical clock changes disconnect sockets with stale expiry timers", async () => {
+  const server = await startRealtimeServer();
+  try {
+    const client = server.client({
+      transports: ["websocket"],
+      auth: { token: currentToken(2) },
+    });
+    await event(client, "connect");
+    const disconnected = event(client, "disconnect");
+    freezeClock("2030-01-01T00:00:00Z");
+    await disconnected;
     assert.equal(client.connected, false);
   } finally {
     await server.close();
