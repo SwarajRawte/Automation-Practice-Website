@@ -10,24 +10,39 @@ Theme preference persists locally. The UI respects reduced-motion preferences an
 
 ## Quick start
 
-Requires Node 22.5+ (Node 24 LTS recommended).
+Requires Node 22.12+ (Node 24 LTS recommended).
 
 ```bash
 cp .env.example .env
-npm install
+npm ci
 npm run dev
 ```
 
 Frontend: `http://localhost:5173`; API: `http://localhost:3100`; Swagger: `http://localhost:3100/api/docs`.
 
-Production or Docker:
+Local single-server build or Docker:
 
 ```bash
 npm run build && npm start
 docker compose up --build
 ```
 
-SQLite data is stored at `DB_PATH` (default `data/testlab.db`). The application uses Node's built-in SQLite driver, avoiding native add-on setup. Run `npm run seed` to restore deterministic products/orders, or `npm run reset` for a full reset.
+Development, start, seed, and reset commands load `.env` when it exists, while
+variables already exported by the shell take precedence. Tests always use an
+isolated in-memory database and never load `.env`. Docker Compose reads `.env`,
+requires an explicit `JWT_SECRET`, and binds the service to `127.0.0.1:3000`.
+The values in `.env.example`, seeded accounts, and test controls are intended
+only for a local automation lab; do not expose them to an untrusted network. The
+container runs in production mode and rejects the example JWT placeholder, so
+replace `JWT_SECRET` with a unique value of at least 32 characters before
+running Compose. Docker test controls remain disabled unless
+`DOCKER_TEST_MODE=true` and `DOCKER_TEST_CONTROL_KEY` are both supplied.
+
+SQLite data is stored at `DB_PATH` (default `data/testlab.db`). The application
+uses Node's built-in SQLite driver, avoiding native add-on setup. Run
+`npm run seed` to restore deterministic products/orders without deleting
+user-owned forms or uploads. Run `npm run reset` for a full reset; it also
+invalidates every previously issued access and refresh token.
 
 ## Test accounts
 
@@ -44,9 +59,17 @@ Phase 1 provides registration, simulated email verification, login/logout, remem
 
 Authentication is mandatory. Opening `/` or any module without a valid session shows only `/auth/login`; after login the application opens `/dashboard`. Direct protected URLs are preserved in `returnUrl`. The sidebar and application shell are never rendered until `GET /api/auth/session` succeeds. Authenticated users visiting `/` or `/auth/login` are redirected to `/dashboard`.
 
-Access tokens are accepted through the authorization header and an HTTP-only same-site cookie. Logout revokes refresh tokens, increments the server-side session version to invalidate access tokens, clears browser authentication, and replaces browser history with the login route. See [AUTH_FLOW.md](AUTH_FLOW.md).
+Browser access tokens remain in memory, while access and refresh cookies are
+HTTP-only and same-site. Logout revokes refresh tokens, increments the
+server-side session version to invalidate access tokens, disconnects active
+sockets, clears browser authentication, and replaces browser history with the
+login route. A successful login intentionally invalidates the account's prior
+device session. See [AUTH_FLOW.md](AUTH_FLOW.md).
 
-In test mode, registration and forgot-password responses expose deterministic tokens so automation never depends on email. Production-style mode omits these values. Authentication events are recorded in the `audit` table.
+In test mode, registration and forgot-password responses expose deterministic
+tokens so automation never depends on email. Because this project has no real
+email provider, those simulation endpoints return `503 SIMULATION_DISABLED`
+outside test mode. Authentication events are recorded in the `audit` table.
 
 Authentication routes:
 
@@ -85,25 +108,55 @@ Form submissions use real persistence through `POST /api/forms`; confirmation re
 - Wait and synchronization scenarios: `/dynamic-elements?delay=1500&deterministic=true`
 - Web components: `/shadow-dom`
 
-Table data contains exactly 100 generated users and supports server pagination, filtering, and multi-column sorting. Product writes require Admin, use optimistic version checks, preserve history, soft-delete with deterministic undo tokens, and return 409 for duplicate names/conflicts. Uploads persist in SQLite, accept TXT/CSV/PDF/PNG/JPEG up to 5 MB, and reject zero-byte, duplicate, disallowed, and simulated-failure scenarios.
+Table data contains exactly 100 generated users and supports server pagination,
+filtering, and multi-column sorting. Product writes require Admin, use
+optimistic version checks, preserve history, soft-delete with deterministic undo
+tokens, and return 409 for duplicate names/conflicts. Upload persistence is
+user-scoped, accepts TXT/CSV/PDF/PNG/JPEG up to 5 MB per file, defaults to a
+50 MB stored quota per user, and rejects zero-byte, same-user duplicate,
+disallowed, referenced-delete, and simulated-failure scenarios. Viewer accounts
+can browse practice data but cannot mutate it.
 
 ## Environment
 
-See `.env.example`. Test-control endpoints are unavailable when `TEST_MODE=false`. Always replace `JWT_SECRET` outside local development. No payment/email provider or hardware permission is contacted.
+See `.env.example`. `HOST` and `PORT` control the API listener; local development
+binds to `127.0.0.1`, while Compose listens on all container interfaces but
+publishes the port only on the host loopback interface. Vite derives its proxy
+target from `PORT` unless `VITE_API_TARGET` supplies a full URL. `APP_ORIGIN`
+defines the development browser origin; Compose uses
+`DOCKER_APP_ORIGIN` (default `http://localhost:3000`) so the development value
+cannot accidentally override the container origin. Docker likewise ignores the
+development `TEST_MODE` and `TEST_CONTROL_KEY`: set `DOCKER_TEST_MODE=true` and
+an explicit `DOCKER_TEST_CONTROL_KEY` only for a local containerized test lab.
+`COOKIE_SECURE=true` is
+appropriate only when the application is served over HTTPS. Test-control
+endpoints are available only when `TEST_MODE=true` and require
+`TEST_CONTROL_KEY`.
+`VITE_TEST_CONTROL_KEY` exposes that same local key to the Test Control page at
+build time; every `VITE_` value is browser-visible, so this setting is test-only
+and must never be treated as a secret. Always replace the local JWT secret and
+test-control key before sharing the service. No payment/email provider or
+hardware permission is contacted.
 
 ## Automation examples
 
-Install the example project's dependencies, start this app, then use `npm test` in `examples/playwright` or `examples/cypress`. For Selenium, use Maven in `examples/selenium-java`. Examples are intentionally small and demonstrate reusable page objects, stable selectors, API setup, UI assertions, screenshots, traces/reports, and CI-ready configuration.
+The repository includes a pinned Playwright starter configuration in
+`examples/playwright`. Run `npm ci` there, add suites under its `tests`
+directory, start this app, and run `npm test`. Set `BASE_URL` when the app is not
+running at the default development URL, `http://localhost:5173`.
 
 ## Troubleshooting
 
 - Delete `data/testlab.db` only when the server is stopped, or use `npm run reset`.
-- The API uses port `3100` and Vite uses port `5173`. If either is busy, set
-  `PORT` and adjust the matching target in `vite.config.ts`.
+- The API uses port `3100` and Vite uses port `5173`. If the API port is busy,
+  set `PORT`; set `VITE_API_TARGET` only when Vite must proxy to a different
+  host or URL.
+- For Docker, change `HOST_PORT` and the matching `DOCKER_APP_ORIGIN` together.
 - File uploads are limited to 5 MB and five files.
 - Login once as admin before testing protected management APIs.
 
-See [TESTING_GUIDE.md](TESTING_GUIDE.md), [API_GUIDE.md](API_GUIDE.md), and [MODULE_CATALOG.md](MODULE_CATALOG.md). Contributions should follow [CONTRIBUTING.md](CONTRIBUTING.md).
+See [TESTING_GUIDE.md](TESTING_GUIDE.md), [AUTH_FLOW.md](AUTH_FLOW.md), the
+phase completion documents, and [UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md).
 
 ## Known limitations and next improvements
 

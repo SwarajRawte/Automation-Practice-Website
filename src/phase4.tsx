@@ -1,31 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { io, type Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
 import { Activity, Radio, ShieldCheck, ShoppingCart } from "lucide-react";
 import { PageHeader } from "./components/layout/PageHeader";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
+import {
+  authenticatedFetch,
+  createAuthenticatedSocket,
+  getSessionUser,
+} from "./authClient";
 
 const CART_STORAGE_KEY = "phase4-cart";
-
-const expireSession = () => {
-  localStorage.removeItem("token");
-  localStorage.removeItem("refreshToken");
-  localStorage.removeItem("user");
-  const returnUrl = `${window.location.pathname}${window.location.search}`;
-  window.location.replace(
-    `/auth/login?reason=session-expired&returnUrl=${encodeURIComponent(returnUrl)}`,
-  );
-};
 
 const api = async (url: string, init?: RequestInit) => {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("content-type"))
     headers.set("content-type", "application/json");
-  headers.set("x-test-key", "testlab-control");
-  const token = localStorage.getItem("token");
-  if (token) headers.set("authorization", `Bearer ${token}`);
-
-  const response = await fetch(url, { ...init, headers });
+  const response = await authenticatedFetch(url, { ...init, headers });
   const text = response.status === 204 ? "" : await response.text();
   let body: any = null;
   if (text) {
@@ -36,7 +27,6 @@ const api = async (url: string, init?: RequestInit) => {
     }
   }
   if (!response.ok) {
-    if (response.status === 401) expireSession();
     throw new Error(body?.error || `HTTP ${response.status}`);
   }
   return body;
@@ -68,14 +58,10 @@ type Order = {
 };
 
 function cartOwner() {
-  try {
-    const user = JSON.parse(localStorage.getItem("user") || "null");
-    if (typeof user?.id === "string" || typeof user?.id === "number")
-      return String(user.id);
-    if (typeof user?.email === "string") return user.email;
-  } catch {
-    // The authentication gate will repair invalid user state.
-  }
+  const user = getSessionUser();
+  if (typeof user?.id === "string" || typeof user?.id === "number")
+    return String(user.id);
+  if (typeof user?.email === "string") return user.email;
   return "anonymous";
 }
 
@@ -697,6 +683,7 @@ function normalizeNetworkConfig(value: any): NetworkConfig {
 }
 
 export function Phase4Network() {
+  const admin = getSessionUser()?.role === "ADMIN";
   const [method, setMethod] = useState("GET");
   const [status, setStatus] = useState("");
   const [config, setConfig] = useState<NetworkConfig>(DEFAULT_NETWORK_CONFIG);
@@ -725,16 +712,20 @@ export function Phase4Network() {
     setSending(true);
     setStatus("");
     try {
-      const headers = new Headers({ "content-type": "application/json" });
-      const token = localStorage.getItem("token");
-      if (token) headers.set("authorization", `Bearer ${token}`);
-      const response = await fetch("/api/network/echo?source=playground", {
-        method,
-        headers,
-        body: ["POST", "PUT", "PATCH"].includes(method)
-          ? JSON.stringify({ message: "Phase 4 request" })
-          : undefined,
-      });
+      const response = await authenticatedFetch(
+        "/api/network/echo?source=playground",
+        {
+          method,
+          headers: { "content-type": "application/json" },
+          body: ["POST", "PUT", "PATCH"].includes(method)
+            ? JSON.stringify({ message: "Phase 4 request" })
+            : undefined,
+        },
+        {
+          retryOnUnauthorized: false,
+          redirectOnUnauthorized: false,
+        },
+      );
       const body = await response.text();
       setStatus(`${response.status}${body ? `\n${body}` : ""}`);
     } catch (error) {
@@ -745,6 +736,10 @@ export function Phase4Network() {
   };
 
   const applyConfig = async (next = config) => {
+    if (!admin) {
+      setStatus("Administrator role required to change network simulation.");
+      return;
+    }
     const normalized = normalizeNetworkConfig(next);
     if (
       next.statusCode.trim() &&
@@ -757,8 +752,8 @@ export function Phase4Network() {
     setApplying(true);
     setStatus("");
     try {
-      const result = await api("/api/test/network", {
-        method: "POST",
+      const result = await api("/api/network/config", {
+        method: "PUT",
         body: JSON.stringify({
           ...normalized,
           statusCode: normalized.statusCode
@@ -789,7 +784,7 @@ export function Phase4Network() {
         icon={Activity}
         title="API & Network Playground"
         description="Send REST requests and deterministically simulate latency, status failures, and offline behavior."
-        onReset={resetSimulation}
+        onReset={admin ? resetSimulation : undefined}
       />
       <div className="phase4-grid">
         <section className="panel">
@@ -815,12 +810,19 @@ export function Phase4Network() {
         </section>
         <section className="panel form">
           <h3>Network simulation</h3>
+          {!admin && (
+            <p className="read-only-banner" role="status">
+              Administrator role required to change network simulation. The
+              request builder remains available.
+            </p>
+          )}
           <label>
             Delay (ms)
             <input
               type="number"
               min="0"
               max="5000"
+              disabled={!admin}
               value={config.delay}
               onChange={(event) =>
                 setConfig({ ...config, delay: Number(event.target.value) })
@@ -832,6 +834,7 @@ export function Phase4Network() {
             <input
               inputMode="numeric"
               placeholder="none"
+              disabled={!admin}
               value={config.statusCode}
               onChange={(event) =>
                 setConfig({ ...config, statusCode: event.target.value })
@@ -842,13 +845,17 @@ export function Phase4Network() {
             <input
               type="checkbox"
               checked={config.offline}
+              disabled={!admin}
               onChange={(event) =>
                 setConfig({ ...config, offline: event.target.checked })
               }
             />
             Offline mode
           </label>
-          <button disabled={applying} onClick={() => void applyConfig()}>
+          <button
+            disabled={!admin || applying}
+            onClick={() => void applyConfig()}
+          >
             {applying ? "Applying…" : "Apply simulation"}
           </button>
         </section>
@@ -856,7 +863,7 @@ export function Phase4Network() {
       <TestInfoPanel
         name="API and network"
         concepts="REST methods, status codes, latency, offline, custom headers, request IDs"
-        endpoints="ALL /api/network/echo, POST /api/test/network, GET /api/docs"
+        endpoints="ALL /api/network/echo, PUT /api/network/config, GET /api/docs"
       />
     </>
   );
@@ -869,7 +876,7 @@ export function Phase4Realtime() {
   const [events, setEvents] = useState<string[]>([]);
 
   useEffect(() => {
-    const current = io();
+    const current = createAuthenticatedSocket();
     socket.current = current;
     current.on("connect", () => setConnected(true));
     current.on("disconnect", () => setConnected(false));
@@ -988,10 +995,7 @@ export function Phase4Admin() {
     setExporting(true);
     setError("");
     try {
-      const headers = new Headers();
-      const token = localStorage.getItem("token");
-      if (token) headers.set("authorization", `Bearer ${token}`);
-      const response = await fetch("/api/admin/export", { headers });
+      const response = await authenticatedFetch("/api/admin/export");
       if (!response.ok) {
         let message = `HTTP ${response.status}`;
         try {
@@ -1000,7 +1004,6 @@ export function Phase4Admin() {
         } catch {
           // Keep the status fallback for a non-JSON infrastructure response.
         }
-        if (response.status === 401) expireSession();
         throw new Error(message);
       }
       const blobUrl = URL.createObjectURL(await response.blob());

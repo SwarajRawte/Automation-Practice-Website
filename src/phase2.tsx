@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
 import { PageHeader } from "./components/layout/PageHeader";
+import { authenticatedFetch } from "./authClient";
 import {
   AppWindow,
   FormInput,
@@ -10,11 +11,10 @@ import {
   PanelTopOpen,
 } from "lucide-react";
 const jsonApi = async (url: string, init?: RequestInit) => {
-  const r = await fetch(url, {
+  const r = await authenticatedFetch(url, {
       ...init,
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${localStorage.getItem("token") || ""}`,
         ...init?.headers,
       },
     }),
@@ -34,14 +34,23 @@ const jsonApi = async (url: string, init?: RequestInit) => {
   }
   return body;
 };
+const redactSubmission = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const redacted = { ...(value as Record<string, unknown>) };
+  delete redacted.password;
+  delete redacted.confirmPassword;
+  return redacted;
+};
 const readLastSubmission = (): Record<string, unknown> | null => {
   try {
     const stored = sessionStorage.getItem("last-form-submission");
     if (!stored) return null;
     const parsed: unknown = JSON.parse(stored);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return null;
+    const redacted = redactSubmission(parsed);
+    sessionStorage.setItem("last-form-submission", JSON.stringify(redacted));
+    return redacted;
   } catch {
     return null;
   }
@@ -128,9 +137,10 @@ export function Phase2Forms() {
         method: "POST",
         body: JSON.stringify(data),
       });
+      const persistedSubmission = redactSubmission(result.data);
       sessionStorage.setItem(
         "last-form-submission",
-        JSON.stringify(result.data),
+        JSON.stringify(persistedSubmission),
       );
       setStatus(result.message);
       nav("/forms/confirmation");
@@ -1108,17 +1118,35 @@ export function Phase2Dialogs() {
 export function Phase2Contexts() {
   const loc = useLocation(),
     frames = loc.pathname.startsWith("/frames"),
-    [messages, setMessages] = useState<string[]>([]);
+    [messages, setMessages] = useState<string[]>([]),
+    childWindows = useRef<Window[]>([]);
+  const openContext = (
+    url: string,
+    target = "_blank",
+    features?: string,
+  ) => {
+    const opened = window.open(url, target, features);
+    if (opened) {
+      childWindows.current = [
+        ...childWindows.current.filter((childWindow) => !childWindow.closed),
+        opened,
+      ].slice(-20);
+    }
+    return opened;
+  };
   useEffect(() => {
     const fn = (e: MessageEvent) => {
       if (e.origin !== window.location.origin) return;
-      setMessages((v) => [`Received: ${String(e.data)}`, ...v]);
+      if (!e.source || !childWindows.current.includes(e.source as Window))
+        return;
+      if (typeof e.data !== "string" || e.data.length > 500) return;
+      setMessages((v) => [`Received: ${e.data}`, ...v].slice(0, 50));
     };
     addEventListener("message", fn);
     return () => removeEventListener("message", fn);
   }, []);
   if (frames) return <Frames />;
-  const child = new URLSearchParams(loc.search).get("context");
+  const child = new URLSearchParams(loc.search).get("context")?.slice(0, 100);
   if (child)
     return (
       <>
@@ -1147,14 +1175,14 @@ export function Phase2Contexts() {
       />
       <div className="panel actions">
         <button
-          onClick={() => window.open("/windows?context=tab-one", "_blank")}
+          onClick={() => openContext("/windows?context=tab-one")}
         >
           Open new tab
         </button>
         <button
           onClick={() =>
             ["tab-a", "tab-b", "tab-c"].forEach((x) =>
-              window.open(`/windows?context=${x}`, "_blank"),
+              openContext(`/windows?context=${x}`),
             )
           }
         >
@@ -1162,7 +1190,7 @@ export function Phase2Contexts() {
         </button>
         <button
           onClick={() =>
-            window.open(
+            openContext(
               "/windows?context=child-window",
               "testlab-child",
               "width=600,height=500",
@@ -1173,7 +1201,7 @@ export function Phase2Contexts() {
         </button>
         <button
           onClick={() =>
-            window.open(
+            openContext(
               "/windows?context=communication-child",
               "communication-child",
               "width=600,height=500",

@@ -196,7 +196,9 @@ phase3Router.put("/products/:id", roles("ADMIN"), (req, res) => {
   const current = productById(String(req.params.id));
   if (!current) return res.status(404).json({ error: "Product not found" });
   const body =
-      typeof req.body === "object" && req.body !== null && !Array.isArray(req.body)
+      typeof req.body === "object" &&
+      req.body !== null &&
+      !Array.isArray(req.body)
         ? (req.body as Record<string, unknown>)
         : {},
     values = productValues(body);
@@ -214,9 +216,7 @@ phase3Router.put("/products/:id", roles("ADMIN"), (req, res) => {
       values.category,
       values.price,
       values.inventory,
-      values.inventory === 0
-        ? "OUT_OF_STOCK"
-        : values.status,
+      values.inventory === 0 ? "OUT_OF_STOCK" : values.status,
       new Date().toISOString(),
       current.id,
     );
@@ -289,6 +289,22 @@ phase3Router.get("/products/:id/history", (req, res) =>
       .map((row: any) => ({ ...row, snapshot: JSON.parse(row.snapshot) })),
   }),
 );
+const uploadQuotaBytes = () => {
+    const configured = Number(process.env.UPLOAD_QUOTA_BYTES || 50_000_000);
+    return Number.isSafeInteger(configured) && configured > 0
+      ? configured
+      : 50_000_000;
+  },
+  storedUploadBytes = (ownerUserId: number) =>
+    Number(
+      (
+        db
+          .prepare(
+            "SELECT COALESCE(SUM(size),0) total FROM uploaded_files WHERE owner_user_id=?",
+          )
+          .get(ownerUserId) as { total: number }
+      ).total,
+    );
 phase3Router.post(
   "/products/:id/image",
   roles("ADMIN"),
@@ -304,15 +320,24 @@ phase3Router.post(
       .createHash("sha256")
       .update(req.file.buffer)
       .digest("hex");
+    const ownerUserId = (req as AuthRequest).user!.id;
     let file = db
-      .prepare("SELECT id FROM uploaded_files WHERE sha256=?")
-      .get(digest) as { id: number } | undefined;
+      .prepare(
+        "SELECT id FROM uploaded_files WHERE owner_user_id=? AND sha256=?",
+      )
+      .get(ownerUserId, digest) as { id: number } | undefined;
     if (!file) {
+      if (storedUploadBytes(ownerUserId) + req.file.size > uploadQuotaBytes())
+        return res.status(413).json({
+          error: "Stored upload quota exceeded",
+          code: "UPLOAD_QUOTA_EXCEEDED",
+        });
       const result = db
         .prepare(
-          "INSERT INTO uploaded_files(name,size,mime_type,sha256,data,created_at) VALUES(?,?,?,?,?,?)",
+          "INSERT INTO uploaded_files(owner_user_id,name,size,mime_type,sha256,data,created_at) VALUES(?,?,?,?,?,?,?)",
         )
         .run(
+          ownerUserId,
           req.file.originalname,
           req.file.size,
           req.file.mimetype,
@@ -341,87 +366,120 @@ const upload = multer({
     "image/png",
     "image/jpeg",
   ]);
-phase3Router.post("/files/upload", upload.array("files", 5), (req, res, next) => {
-  if (req.query.fail === "true")
-    return res.status(503).json({ error: "Simulated upload failure" });
-  const files = Array.isArray(req.files)
-    ? (req.files as Express.Multer.File[])
-    : [];
-  if (!files.length)
-    return res.status(422).json({ error: "At least one file is required" });
-  const prepared: Array<{ file: Express.Multer.File; digest: string }> = [],
-    batchDigests = new Set<string>();
-  for (const file of files) {
-    if (file.size === 0)
-      return res
-        .status(422)
-        .json({ error: `Zero-byte file rejected: ${file.originalname}` });
-    if (!allowed.has(file.mimetype))
-      return res
-        .status(415)
-        .json({ error: `File type not allowed: ${file.mimetype}` });
-    const digest = crypto
-      .createHash("sha256")
-      .update(file.buffer)
-      .digest("hex");
-    if (
-      batchDigests.has(digest) ||
-      db.prepare("SELECT id FROM uploaded_files WHERE sha256=?").get(digest)
-    )
-      return res
-        .status(409)
-        .json({ error: `Duplicate file: ${file.originalname}` });
-    batchDigests.add(digest);
-    prepared.push({ file, digest });
-  }
-  const results = [];
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    for (const { file, digest } of prepared) {
-      const result = db
-        .prepare(
-          "INSERT INTO uploaded_files(name,size,mime_type,sha256,data,created_at) VALUES(?,?,?,?,?,?)",
-        )
-        .run(
-          file.originalname,
-          file.size,
-          file.mimetype,
-          digest,
-          file.buffer,
-          new Date().toISOString(),
-        );
-      results.push({
-        id: Number(result.lastInsertRowid),
-        name: file.originalname,
-        size: file.size,
-        type: file.mimetype,
-        preview: file.mimetype.startsWith("image/"),
-      });
+phase3Router.post(
+  "/files/upload",
+  roles("ADMIN", "USER"),
+  upload.array("files", 5),
+  (req, res, next) => {
+    if (req.query.fail === "true")
+      return res.status(503).json({ error: "Simulated upload failure" });
+    const files = Array.isArray(req.files)
+      ? (req.files as Express.Multer.File[])
+      : [];
+    if (!files.length)
+      return res.status(422).json({ error: "At least one file is required" });
+    const ownerUserId = (req as AuthRequest).user!.id,
+      prepared: Array<{ file: Express.Multer.File; digest: string }> = [],
+      batchDigests = new Set<string>();
+    for (const file of files) {
+      if (file.size === 0)
+        return res
+          .status(422)
+          .json({ error: `Zero-byte file rejected: ${file.originalname}` });
+      if (!allowed.has(file.mimetype))
+        return res
+          .status(415)
+          .json({ error: `File type not allowed: ${file.mimetype}` });
+      const digest = crypto
+        .createHash("sha256")
+        .update(file.buffer)
+        .digest("hex");
+      if (
+        batchDigests.has(digest) ||
+        db
+          .prepare(
+            "SELECT id FROM uploaded_files WHERE owner_user_id=? AND sha256=?",
+          )
+          .get(ownerUserId, digest)
+      )
+        return res
+          .status(409)
+          .json({ error: `Duplicate file: ${file.originalname}` });
+      batchDigests.add(digest);
+      prepared.push({ file, digest });
     }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    return next(error);
-  }
-  res.status(201).json({ files: results });
-});
-phase3Router.get("/files", (req, res) =>
+    const incomingBytes = prepared.reduce(
+      (total, preparedFile) => total + preparedFile.file.size,
+      0,
+    );
+    if (storedUploadBytes(ownerUserId) + incomingBytes > uploadQuotaBytes())
+      return res.status(413).json({
+        error: "Stored upload quota exceeded",
+        code: "UPLOAD_QUOTA_EXCEEDED",
+      });
+    const results = [];
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const { file, digest } of prepared) {
+        const result = db
+          .prepare(
+            "INSERT INTO uploaded_files(owner_user_id,name,size,mime_type,sha256,data,created_at) VALUES(?,?,?,?,?,?,?)",
+          )
+          .run(
+            ownerUserId,
+            file.originalname,
+            file.size,
+            file.mimetype,
+            digest,
+            file.buffer,
+            new Date().toISOString(),
+          );
+        results.push({
+          id: Number(result.lastInsertRowid),
+          name: file.originalname,
+          size: file.size,
+          type: file.mimetype,
+          preview: file.mimetype.startsWith("image/"),
+        });
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      return next(error);
+    }
+    res.status(201).json({ files: results });
+  },
+);
+phase3Router.get("/files", (req: AuthRequest, res) =>
   res.json({
     data: db
       .prepare(
-        "SELECT id,name,size,mime_type type,created_at FROM uploaded_files ORDER BY id",
+        "SELECT id,name,size,mime_type type,created_at FROM uploaded_files WHERE owner_user_id=? ORDER BY id",
       )
-      .all(),
+      .all(req.user!.id),
   }),
 );
-phase3Router.delete("/files/:id", (req, res) => {
-  const result = db
-    .prepare("DELETE FROM uploaded_files WHERE id=?")
-    .run(String(req.params.id));
-  result.changes
-    ? res.status(204).end()
-    : res.status(404).json({ error: "File not found" });
-});
+phase3Router.delete(
+  "/files/:id",
+  roles("ADMIN", "USER"),
+  (req: AuthRequest, res) => {
+    const fileId = String(req.params.id),
+      ownedFile = db
+        .prepare("SELECT id FROM uploaded_files WHERE id=? AND owner_user_id=?")
+        .get(fileId, req.user!.id);
+    if (!ownedFile) return res.status(404).json({ error: "File not found" });
+    if (db.prepare("SELECT id FROM products WHERE image_file_id=?").get(fileId))
+      return res.status(409).json({
+        error: "File is referenced by a product",
+        code: "FILE_IN_USE",
+      });
+    db.prepare("DELETE FROM uploaded_files WHERE id=? AND owner_user_id=?").run(
+      fileId,
+      req.user!.id,
+    );
+    return res.status(204).end();
+  },
+);
 phase3Router.post("/files/process-csv", upload.single("file"), (req, res) => {
   if (!req.file || req.file.mimetype !== "text/csv")
     return res.status(415).json({ error: "CSV file required" });
@@ -456,13 +514,11 @@ phase3Router.get("/files/download/:type", (req, res) => {
 });
 phase3Router.use((error: any, _req: any, res: any, next: any) => {
   if (error instanceof multer.MulterError)
-    return res
-      .status(error.code === "LIMIT_FILE_SIZE" ? 413 : 422)
-      .json({
-        error:
-          error.code === "LIMIT_FILE_SIZE"
-            ? "Maximum file size is 5 MB"
-            : error.message,
-      });
+    return res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 422).json({
+      error:
+        error.code === "LIMIT_FILE_SIZE"
+          ? "Maximum file size is 5 MB"
+          : error.message,
+    });
   return next(error);
 });

@@ -15,6 +15,7 @@ app.post("/api/test/protected", auth, testControlGuard, (_req, res) =>
 
 beforeEach(() => {
   delete process.env.TEST_MODE;
+  delete process.env.TEST_CONTROL_KEY;
   reset();
 });
 
@@ -27,6 +28,8 @@ const login = async (email: string, password: string) =>
   ).body.token as string;
 
 test("test controls require both the configured key and an admin role", async () => {
+  process.env.TEST_MODE = "true";
+  process.env.TEST_CONTROL_KEY = "testlab-control";
   const userToken = await login("user@testlab.local", "User123!");
   await request(app)
     .post("/api/test/protected")
@@ -49,14 +52,30 @@ test("test controls require both the configured key and an admin role", async ()
     .expect(200);
 });
 
-test("test controls are hidden when test mode is disabled", async () => {
+test("test controls are hidden unless test mode is explicitly true", async () => {
   const adminToken = await login("admin@testlab.local", "Admin123!");
-  process.env.TEST_MODE = "false";
   await request(app)
     .post("/api/test/protected")
     .set("authorization", `Bearer ${adminToken}`)
     .set("x-test-key", "testlab-control")
     .send({})
     .expect(404);
-  delete process.env.TEST_MODE;
+  process.env.TEST_MODE = "yes";
+  await request(app)
+    .post("/api/test/protected")
+    .set("authorization", `Bearer ${adminToken}`)
+    .set("x-test-key", "testlab-control")
+    .send({})
+    .expect(404);
+});
+
+test("test controls fail closed without a configured key", async () => {
+  process.env.TEST_MODE = "true";
+  const adminToken = await login("admin@testlab.local", "Admin123!");
+  await request(app)
+    .post("/api/test/protected")
+    .set("authorization", `Bearer ${adminToken}`)
+    .set("x-test-key", "testlab-control")
+    .send({})
+    .expect(403);
 });

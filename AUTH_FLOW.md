@@ -4,12 +4,12 @@ The authentication pages and application shell are separate route trees. Only lo
 
 ## Browser flow
 
-1. The app displays an authentication-loading screen while validating the stored access token with `GET /api/auth/session`.
-2. If needed, it attempts one refresh-token rotation through `POST /api/auth/refresh`.
+1. The app displays an authentication-loading screen while validating its HTTP-only access cookie or in-memory access token with `GET /api/auth/session`.
+2. If needed, it rotates the HTTP-only refresh cookie through `POST /api/auth/refresh`. Browser code does not persist access or refresh tokens in web storage.
 3. Anonymous users are redirected to `/auth/login?returnUrl=<original URL>` without rendering the sidebar or dashboard.
 4. Successful login replaces the current browser entry with the return URL or `/dashboard`.
 5. Failed login keeps the email, clears the password, announces the inline error, and stays on the login page.
-6. Logout revokes server tokens, clears the HTTP-only cookie and browser storage, then replaces the current entry with `/auth/login`.
+6. Logout revokes server tokens, clears both HTTP-only authentication cookies and cached browser user state, then replaces the current entry with `/auth/login`.
 
 ## Authorization
 

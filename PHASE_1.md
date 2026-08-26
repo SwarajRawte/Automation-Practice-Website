@@ -19,7 +19,7 @@ Phase 1 establishes the project, responsive navigation, deterministic SQLite dat
 
 ## Deterministic credentials and tokens
 
-Fixed credentials are in the README. Under `TEST_MODE=true`, verification/reset tokens use `VERIFY-<id>-TEST` and `RESET-<id>-TEST`. `TEST_CONTROL_KEY` defaults to `testlab-control` for local development.
+Fixed credentials are in the README. Under `TEST_MODE=true`, verification/reset tokens use `VERIFY-<id>-TEST` and `RESET-<id>-TEST`. Test controls fail closed unless `TEST_CONTROL_KEY` is configured; `.env.example` contains a local-only demonstration value.
 
 ## Verification commands
 

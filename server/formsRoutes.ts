@@ -1,12 +1,28 @@
 import { Router } from "express";
 import { db } from "./db.js";
+import type { AuthRequest } from "./types.js";
+import { roles } from "./auth.js";
 
 export const formsRouter = Router();
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-formsRouter.post("/forms", (req, res) => {
+const redactPasswords = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(redactPasswords);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !/password/i.test(key))
+      .map(([key, item]) => [key, redactPasswords(item)]),
+  );
+};
+
+formsRouter.post("/forms", roles("ADMIN", "USER"), (req: AuthRequest, res) => {
+  if (!req.user)
+    return res
+      .status(401)
+      .json({ error: "Authentication required", code: "AUTH_REQUIRED" });
   const body = isRecord(req.body) ? req.body : {},
     errors: Record<string, string> = {},
     name = typeof body.name === "string" ? body.name.trim() : "",
@@ -41,22 +57,29 @@ formsRouter.post("/forms", (req, res) => {
   }
   if (Object.keys(errors).length)
     return res.status(422).json({ error: "Form validation failed", errors });
+  const safeBody = redactPasswords(body);
   const id = Number(
     db
-      .prepare("INSERT INTO form_submissions(data,created_at) VALUES(?,?)")
-      .run(JSON.stringify(body), new Date().toISOString()).lastInsertRowid,
+      .prepare(
+        "INSERT INTO form_submissions(user_id,data,created_at) VALUES(?,?,?)",
+      )
+      .run(req.user.id, JSON.stringify(safeBody), new Date().toISOString())
+      .lastInsertRowid,
   );
   return res
     .status(201)
-    .json({ id, data: body, message: "Form submitted successfully" });
+    .json({ id, data: safeBody, message: "Form submitted successfully" });
 });
 
-formsRouter.get("/forms/:id", (req, res) => {
+formsRouter.get("/forms/:id", (req: AuthRequest, res) => {
+  if (!req.user)
+    return res
+      .status(401)
+      .json({ error: "Authentication required", code: "AUTH_REQUIRED" });
   const row = db
-    .prepare("SELECT * FROM form_submissions WHERE id=?")
-    .get(String(req.params.id)) as
-    | { id: number; data: string; created_at: string }
-    | undefined;
+    .prepare("SELECT * FROM form_submissions WHERE id=? AND user_id=?")
+    .get(String(req.params.id), req.user.id) as
+    { id: number; data: string; created_at: string } | undefined;
   return row
     ? res.json({
         id: row.id,

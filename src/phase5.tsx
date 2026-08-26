@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "./components/layout/PageHeader";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
+import { authenticatedFetch } from "./authClient";
 
 const LAB_LOCAL_KEY = "phase5-preference";
 const LAB_SESSION_KEY = "phase5-session";
@@ -419,10 +420,14 @@ export function Phase5Errors() {
     setAttemptedCode(requestedCode);
     setResponseCode(null);
     try {
-      const headers = new Headers();
-      const token = localStorage.getItem("token");
-      if (token) headers.set("authorization", `Bearer ${token}`);
-      const response = await fetch(`/api/status/${requestedCode}`, { headers });
+      const response = await authenticatedFetch(
+        `/api/status/${requestedCode}`,
+        undefined,
+        {
+          retryOnUnauthorized: false,
+          redirectOnUnauthorized: false,
+        },
+      );
       setResponseCode(response.status);
       const text = response.status === 204 ? "" : await response.text();
       let body: unknown = { status: response.status };

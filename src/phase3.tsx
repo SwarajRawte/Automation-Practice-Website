@@ -2,16 +2,15 @@ import React, { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
 import { PageHeader } from "./components/layout/PageHeader";
+import { authenticatedFetch, getSessionUser } from "./authClient";
 import { Braces, Database, FileUp, Table2, TimerReset } from "lucide-react";
 const api = async (url: string, init?: RequestInit) => {
-  const token = localStorage.getItem("token"),
-    response = await fetch(url, {
+  const response = await authenticatedFetch(url, {
       ...init,
       headers: {
         ...(init?.body instanceof FormData
           ? {}
           : { "content-type": "application/json" }),
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
         ...init?.headers,
       },
     }),
@@ -511,14 +510,7 @@ const defaultProductForm = (): ProductForm => ({
   inventory: 10,
   status: "ACTIVE",
 });
-const storedUserIsAdmin = () => {
-  try {
-    const user = JSON.parse(localStorage.getItem("user") || "null");
-    return user?.role === "ADMIN";
-  } catch {
-    return false;
-  }
-};
+const storedUserIsAdmin = () => getSessionUser()?.role === "ADMIN";
 export function Phase3Products() {
   const admin = storedUserIsAdmin(),
     [products, setProducts] = useState<Product[]>([]),
@@ -995,9 +987,7 @@ export function Phase3Files() {
   };
   const download = async (type: string) => {
     try {
-      const response = await fetch(`/api/files/download/${type}`, {
-        headers: { authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
+      const response = await authenticatedFetch(`/api/files/download/${type}`);
       if (!response.ok) throw new Error((await response.json()).error);
       const blob = await response.blob(),
         url = URL.createObjectURL(blob),

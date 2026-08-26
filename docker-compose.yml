@@ -1,12 +1,24 @@
 services:
   testlab:
-    build: .
-    ports: ["3000:3000"]
+    build:
+      context: .
+      args:
+        VITE_TEST_CONTROL_VALUE: "${DOCKER_TEST_CONTROL_KEY:-}"
+    init: true
+    ports:
+      - "127.0.0.1:${HOST_PORT:-3000}:3000"
     environment:
-      PORT: 3000
-      TEST_MODE: "true"
-      JWT_SECRET: docker-local-secret
-      DB_PATH: /app/data/testlab.db
-    volumes: ["testlab-data:/app/data"]
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      NODE_ENV: "production"
+      TEST_MODE: "${DOCKER_TEST_MODE:-false}"
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env before starting Docker}"
+      TEST_CONTROL_KEY: "${DOCKER_TEST_CONTROL_KEY:-}"
+      DB_PATH: "/app/data/testlab.db"
+      APP_ORIGIN: "${DOCKER_APP_ORIGIN:-http://localhost:3000}"
+      COOKIE_SECURE: "${COOKIE_SECURE:-false}"
+      MAX_LOGIN_ATTEMPTS: "${MAX_LOGIN_ATTEMPTS:-5}"
+    volumes:
+      - "testlab-data:/app/data"
 volumes:
   testlab-data:
