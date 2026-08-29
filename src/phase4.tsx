@@ -167,7 +167,7 @@ export function Phase4Shop() {
         if (requestId === productRequest.current) setProductsLoading(false);
       }
     },
-    [query, category, sort],
+    [],
   );
 
   const loadOrders = useCallback(async () => {
@@ -186,8 +186,8 @@ export function Phase4Shop() {
   }, []);
 
   useEffect(() => {
-    if (isProductPath(path)) void loadProducts();
-  }, [path, loadProducts]);
+    if (isProductPath(path)) void loadProducts({ query, category, sort });
+  }, [path, query, category, sort, loadProducts]);
 
   useEffect(() => {
     if (path.endsWith("/orders")) void loadOrders();
