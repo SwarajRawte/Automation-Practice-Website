@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 25
     env:
       API_URL: http://127.0.0.1:3100
-      BASE_URL: http://127.0.0.1:5173
+      BASE_URL: http://127.0.0.1:3100
       TEST_CONTROL_KEY: testlab-control
       TEST_RUN_KEY: testlab-control
       TEST_RUN_ISOLATION: required
@@ -55,6 +55,8 @@ jobs:
             examples/playwright/package-lock.json
       - name: Install application dependencies
         run: npm ci
+      - name: Build application
+        run: npm run build
       - name: Install Playwright dependencies
         run: npm ci
         working-directory: examples/playwright

@@ -60,7 +60,7 @@ export default defineConfig({
         },
         url: `${appUrl}/api/health`,
         reuseExistingServer: !process.env.CI,
-        timeout: process.env.CI ? 300_000 : 120_000,
+        timeout: 120_000,
       }
     : undefined,
 });
