@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="Framework unit checks" parallel="false" verbose="1">
+  <test name="Checks that do not require the application">
+    <classes>
+      <class name="com.testlab.tests.FrameworkConfigurationTest"/>
+      <class name="com.testlab.listeners.LiveSuiteListenerTest"/>
+    </classes>
+  </test>
+</suite>

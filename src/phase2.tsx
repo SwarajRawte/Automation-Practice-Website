@@ -850,7 +850,15 @@ actions.scrollToElement(scrollTarget).click().perform();`}</pre>
   );
 }
 function KeyboardLab() {
-  const [last, setLast] = useState<any>(null),
+  interface KeyboardEventInfo {
+    key: string;
+    code: string;
+    ctrl: boolean;
+    shift: boolean;
+    alt: boolean;
+    repeat: boolean;
+  }
+  const [last, setLast] = useState<KeyboardEventInfo | null>(null),
     [items, setItems] = useState(["Alpha", "Bravo", "Charlie"]),
     [active, setActive] = useState(0),
     [modal, setModal] = useState(false);

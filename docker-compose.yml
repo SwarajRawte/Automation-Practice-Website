@@ -3,8 +3,17 @@ services:
     build:
       context: .
       args:
-        VITE_TEST_CONTROL_VALUE: "${DOCKER_TEST_CONTROL_KEY:-}"
+        VITE_SECOND_ORIGIN_URL: "${DOCKER_SECOND_ORIGIN_URL:-http://localhost:3200}"
     init: true
+    read_only: true
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    pids_limit: 200
+    stop_grace_period: 15s
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,nodev,size=64m"
     ports:
       - "127.0.0.1:${HOST_PORT:-3000}:3000"
     environment:
@@ -16,9 +25,51 @@ services:
       TEST_CONTROL_KEY: "${DOCKER_TEST_CONTROL_KEY:-}"
       DB_PATH: "/app/data/testlab.db"
       APP_ORIGIN: "${DOCKER_APP_ORIGIN:-http://localhost:3000}"
+      SECOND_ORIGIN_URL: "${DOCKER_SECOND_ORIGIN_URL:-http://localhost:3200}"
       COOKIE_SECURE: "${COOKIE_SECURE:-false}"
       MAX_LOGIN_ATTEMPTS: "${MAX_LOGIN_ATTEMPTS:-5}"
+      SHUTDOWN_TIMEOUT_MS: "10000"
     volumes:
       - "testlab-data:/app/data"
+
+  secondary-origin:
+    build:
+      context: .
+      args:
+        VITE_SECOND_ORIGIN_URL: "${DOCKER_SECOND_ORIGIN_URL:-http://localhost:3200}"
+    init: true
+    read_only: true
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    stop_grace_period: 10s
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,nodev,size=32m"
+    command:
+      - node
+      - --env-file-if-exists=.env
+      - --import=tsx
+      - server/secondOrigin.ts
+    ports:
+      - "127.0.0.1:${SECOND_ORIGIN_HOST_PORT:-3200}:3200"
+    environment:
+      NODE_ENV: "production"
+      APP_ORIGIN: "${DOCKER_APP_ORIGIN:-http://localhost:3000}"
+      SECOND_ORIGIN_HOST: "0.0.0.0"
+      SECOND_ORIGIN_PORT: "3200"
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:3200/health
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
 volumes:
   testlab-data:

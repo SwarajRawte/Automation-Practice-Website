@@ -8,6 +8,14 @@ updates:
     directory: "/examples/playwright"
     schedule:
       interval: weekly
+  - package-ecosystem: maven
+    directory: "/examples/selenium-testng"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

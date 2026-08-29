@@ -83,7 +83,18 @@ const dummyPasswordHash = bcrypt.hashSync("InvalidPassword123!", 10),
   refreshCookieOptions = () => cookieOptions("/api/auth");
 const hash = (value: string) =>
   crypto.createHash("sha256").update(value).digest("hex");
-const publicUser = (u: any) => ({
+interface UserRow {
+  id: number;
+  email: string;
+  name: string;
+  password: string;
+  role: Role;
+  verified: number;
+  locked: number;
+  session_version: number;
+}
+
+const publicUser = (u: UserRow) => ({
   id:
     u.role === "ADMIN"
       ? "user-admin-001"
@@ -94,7 +105,7 @@ const publicUser = (u: any) => ({
           : `user-${String(u.id).padStart(6, "0")}`,
   email: u.email,
   name: u.name,
-  role: u.role as Role,
+  role: u.role,
   verified: Boolean(u.verified),
   locked: Boolean(u.locked),
 });
@@ -139,12 +150,23 @@ function issueToken(
   );
   return plain;
 }
-function lookupToken(token: string, type: string) {
+interface TokenRow extends UserRow {
+  id: number;
+  user_id: number;
+  type: "refresh" | "verify" | "reset";
+  token_hash: string;
+  expires_at: string;
+  persistent: number;
+  revoked: number;
+  created_at: string;
+}
+
+function lookupToken(token: string, type: string): TokenRow | null {
   const row = db
     .prepare(
       "SELECT t.*,u.email,u.name,u.role,u.verified,u.locked,u.session_version FROM auth_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.type=? AND t.revoked=0",
     )
-    .get(hash(token), type) as any;
+    .get(hash(token), type) as TokenRow | undefined;
   if (
     !row ||
     Date.parse(row.created_at) > nowMs() ||
@@ -244,7 +266,7 @@ authRouter.post("/login", publicAuthThrottle("login"), async (req, res) => {
       error: "Invalid email or password",
       code: "INVALID_CREDENTIALS",
     });
-  const u = db.prepare("SELECT * FROM users WHERE email=?").get(email) as any;
+  const u = db.prepare("SELECT * FROM users WHERE email=?").get(email) as UserRow | undefined;
   const fail = () => {
     if (u) {
       const failure = db
@@ -280,7 +302,7 @@ authRouter.post("/login", publicAuthThrottle("login"), async (req, res) => {
   if (!u || !passwordMatches) return fail();
   const currentUser = db
     .prepare("SELECT * FROM users WHERE id=?")
-    .get(u.id) as any;
+    .get(u.id) as UserRow | undefined;
   if (!currentUser || currentUser.password !== u.password)
     return res.status(401).json({
       error: "Invalid email or password",
@@ -433,7 +455,7 @@ const forgotPassword = (req: any, res: any) => {
     });
   const body = isRecord(req.body) ? req.body : {},
     email = normalizeEmail(body.email);
-  const u = db.prepare("SELECT id FROM users WHERE email=?").get(email) as any;
+  const u = db.prepare("SELECT id FROM users WHERE email=?").get(email) as UserRow | undefined;
   const resetToken = u ? issueToken(u.id, "reset", 1) : undefined;
   res.json({
     message: "If the account exists, a reset email was simulated",
@@ -494,13 +516,13 @@ authRouter.post("/reset-password", async (req, res) => {
   res.json({ message: "Password reset successfully" });
 });
 authRouter.get("/me", auth, (req: AuthRequest, res) => {
-  const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.user!.id);
+  const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.user!.id) as UserRow | undefined;
   u
     ? res.json(publicUser(u))
     : res.status(404).json({ error: "User not found" });
 });
 authRouter.get("/session", auth, (req: AuthRequest, res) => {
-  const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.user!.id);
+  const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.user!.id) as unknown as UserRow | undefined;
   return u
     ? res.json({ user: publicUser(u) })
     : res
@@ -510,7 +532,10 @@ authRouter.get("/session", auth, (req: AuthRequest, res) => {
 authRouter.post("/change-password", auth, async (req: AuthRequest, res) => {
   const u = db
     .prepare("SELECT * FROM users WHERE id=?")
-    .get(req.user!.id) as any;
+    .get(req.user!.id) as unknown as UserRow | undefined;
+  if (!u) {
+    return res.status(404).json({ error: "User not found", code: "USER_NOT_FOUND" });
+  }
   const body = isRecord(req.body) ? req.body : {},
     currentPassword =
       typeof body.currentPassword === "string" ? body.currentPassword : "",
@@ -547,3 +572,4 @@ authRouter.post("/change-password", auth, async (req: AuthRequest, res) => {
   audit("PASSWORD_CHANGED", { userId: u.id });
   res.json({ message: "Password changed", reauthenticate: true });
 });
+

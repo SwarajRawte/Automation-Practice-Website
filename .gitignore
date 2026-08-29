@@ -5,6 +5,7 @@ data/*.db*
 uploads/
 playwright-report/
 test-results/
+**/target/
 .env
 .env.*
 !.env.example

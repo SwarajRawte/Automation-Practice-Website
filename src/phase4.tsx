@@ -1,36 +1,17 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import type { Socket } from "socket.io-client";
 import { Activity, Radio, ShieldCheck, ShoppingCart } from "lucide-react";
 import { PageHeader } from "./components/layout/PageHeader";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
 import {
+  api,
   authenticatedFetch,
   createAuthenticatedSocket,
   getSessionUser,
 } from "./authClient";
 
 const CART_STORAGE_KEY = "phase4-cart";
-
-const api = async (url: string, init?: RequestInit) => {
-  const headers = new Headers(init?.headers);
-  if (init?.body && !headers.has("content-type"))
-    headers.set("content-type", "application/json");
-  const response = await authenticatedFetch(url, { ...init, headers });
-  const text = response.status === 204 ? "" : await response.text();
-  let body: any = null;
-  if (text) {
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = { error: "The API returned an unexpected response." };
-    }
-  }
-  if (!response.ok) {
-    throw new Error(body?.error || `HTTP ${response.status}`);
-  }
-  return body;
-};
 
 type CartItem = {
   productId: number;
@@ -165,32 +146,36 @@ export function Phase4Shop() {
     }
   };
 
-  const loadProducts = async (filters = { query, category, sort }) => {
-    const requestId = ++productRequest.current;
-    setProductsLoading(true);
-    setMessage("");
-    try {
-      const result = await api(
-        `/api/shop/products?q=${encodeURIComponent(filters.query)}&category=${encodeURIComponent(filters.category)}&sort=${encodeURIComponent(filters.sort)}`,
-      );
-      if (requestId === productRequest.current)
-        setProducts(Array.isArray(result?.data) ? result.data : []);
-    } catch (error) {
-      if (requestId === productRequest.current)
-        setMessage(
-          error instanceof Error ? error.message : "Products failed to load",
+  const loadProducts = useCallback(
+    async (filters?: { query: string; category: string; sort: string }) => {
+      const requestId = ++productRequest.current;
+      setProductsLoading(true);
+      setMessage("");
+      const currentFilters = filters || { query, category, sort };
+      try {
+        const result = await api<{ data: unknown[] }>(
+          `/api/shop/products?q=${encodeURIComponent(currentFilters.query)}&category=${encodeURIComponent(currentFilters.category)}&sort=${encodeURIComponent(currentFilters.sort)}`,
         );
-    } finally {
-      if (requestId === productRequest.current) setProductsLoading(false);
-    }
-  };
+        if (requestId === productRequest.current)
+          setProducts(Array.isArray(result?.data) ? (result.data as Product[]) : []);
+      } catch (error) {
+        if (requestId === productRequest.current)
+          setMessage(
+            error instanceof Error ? error.message : "Products failed to load",
+          );
+      } finally {
+        if (requestId === productRequest.current) setProductsLoading(false);
+      }
+    },
+    [],
+  );
 
-  const loadOrders = async () => {
+  const loadOrders = useCallback(async () => {
     setOrdersLoading(true);
     setMessage("");
     try {
-      const result = await api("/api/shop/orders");
-      setOrders(Array.isArray(result?.data) ? result.data : []);
+      const result = await api<{ data: unknown[] }>("/api/shop/orders");
+      setOrders(Array.isArray(result?.data) ? (result.data as Order[]) : []);
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Orders failed to load",
@@ -198,15 +183,15 @@ export function Phase4Shop() {
     } finally {
       setOrdersLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    if (isProductPath(path)) void loadProducts();
-  }, [path]);
+    if (isProductPath(path)) void loadProducts({ query, category, sort });
+  }, [path, query, category, sort, loadProducts]);
 
   useEffect(() => {
     if (path.endsWith("/orders")) void loadOrders();
-  }, [path]);
+  }, [path, loadOrders]);
 
   const subtotal = useMemo(
     () => cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
@@ -273,7 +258,7 @@ export function Phase4Shop() {
     setMessage("");
     setSubmitting(true);
     try {
-      const result = await api("/api/shop/checkout", {
+      const result = await api<{ orderId: number; message: string; total: number }>("/api/shop/checkout", {
         method: "POST",
         body: JSON.stringify({
           items: cart,
@@ -286,7 +271,7 @@ export function Phase4Shop() {
       });
       saveCart([]);
       setMessage(
-        `Order ${result.orderId}: ${result.message}. Total $${Number(result.total).toFixed(2)}`,
+        `Order ${result?.orderId ?? 0}: ${result?.message ?? "Checkout complete"}. Total $${Number(result?.total ?? 0).toFixed(2)}`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Checkout failed");
@@ -668,7 +653,7 @@ const DEFAULT_NETWORK_CONFIG: NetworkConfig = {
   rateLimit: 10,
 };
 
-function normalizeNetworkConfig(value: any): NetworkConfig {
+function normalizeNetworkConfig(value: Record<string, unknown>): NetworkConfig {
   const statusCode = Number(value?.statusCode);
   return {
     delay: Math.min(5000, Math.max(0, Number(value?.delay) || 0)),
@@ -690,10 +675,10 @@ export function Phase4Network() {
   const [sending, setSending] = useState(false);
   const [applying, setApplying] = useState(false);
 
-  const loadConfig = async () => {
+  const loadConfig = useCallback(async () => {
     try {
-      const current = await api("/api/network/config");
-      setConfig(normalizeNetworkConfig(current));
+      const current = await api<Record<string, unknown>>("/api/network/config");
+      setConfig(normalizeNetworkConfig(current ?? {}));
     } catch (error) {
       setStatus(
         error instanceof Error
@@ -701,11 +686,11 @@ export function Phase4Network() {
           : "Network settings failed to load",
       );
     }
-  };
+  }, []);
 
   useEffect(() => {
     void loadConfig();
-  }, []);
+  }, [loadConfig]);
 
   const send = async () => {
     if (sending) return;
@@ -752,7 +737,7 @@ export function Phase4Network() {
     setApplying(true);
     setStatus("");
     try {
-      const result = await api("/api/network/config", {
+      const result = await api<Record<string, unknown>>("/api/network/config", {
         method: "PUT",
         body: JSON.stringify({
           ...normalized,
@@ -762,7 +747,7 @@ export function Phase4Network() {
         }),
       });
       setConfig(normalized);
-      setStatus(JSON.stringify(result, null, 2));
+      setStatus(JSON.stringify(result ?? {}, null, 2));
     } catch (error) {
       setStatus(
         error instanceof Error ? error.message : "Simulation update failed",
@@ -957,24 +942,34 @@ export function Phase4Realtime() {
 }
 
 export function Phase4Admin() {
-  const [summary, setSummary] = useState<any>(null);
+  interface AdminSummary {
+    users: number;
+    orders: number;
+    revenue: number;
+    products: number;
+  }
+  interface AuditLog {
+    id?: number;
+    [key: string]: unknown;
+  }
+  const [summary, setSummary] = useState<AdminSummary | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [audit, setAudit] = useState<any[]>([]);
+  const [audit, setAudit] = useState<AuditLog[]>([]);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
 
-  const loadAdmin = async () => {
+  const loadAdmin = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const [nextSummary, nextOrders, nextAudit] = await Promise.all([
-        api("/api/admin/summary"),
-        api("/api/admin/orders"),
-        api("/api/admin/audit"),
+        api<{ users: number; orders: number; revenue: number; products: number }>("/api/admin/summary"),
+        api<{ data: Order[] }>("/api/admin/orders"),
+        api<{ data: AuditLog[] }>("/api/admin/audit"),
       ]);
-      setSummary(nextSummary);
+      setSummary(nextSummary ?? null);
       setOrders(Array.isArray(nextOrders?.data) ? nextOrders.data : []);
       setAudit(Array.isArray(nextAudit?.data) ? nextAudit.data : []);
     } catch (reason) {
@@ -984,11 +979,11 @@ export function Phase4Admin() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void loadAdmin();
-  }, []);
+  }, [loadAdmin]);
 
   const downloadReport = async () => {
     if (exporting) return;
@@ -1103,10 +1098,10 @@ export function Phase4Admin() {
         <section className="panel">
           <h3>Recent audit activity</h3>
           <ol className="audit-list">
-            {audit.slice(0, 10).map((entry) => (
-              <li key={entry.id}>
-                <strong>{entry.action}</strong>
-                <small>{entry.created_at}</small>
+            {audit.slice(0, 10).map((entry, index) => (
+              <li key={String(entry.id ?? index)}>
+                <strong>{String(entry.action ?? "Audit entry")}</strong>
+                <small>{String(entry.created_at ?? "")}</small>
               </li>
             ))}
           </ol>
@@ -1121,3 +1116,5 @@ export function Phase4Admin() {
     </>
   );
 }
+
+

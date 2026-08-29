@@ -173,7 +173,6 @@ export function Phase5Visual() {
   const [clock, setClock] = useState(() => new Date().toLocaleTimeString());
   useEffect(() => {
     if (frozen) return;
-    setClock(new Date().toLocaleTimeString());
     const timer = window.setInterval(
       () => setClock(new Date().toLocaleTimeString()),
       1000,
