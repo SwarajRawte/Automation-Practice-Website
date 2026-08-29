@@ -98,7 +98,7 @@ export const privateNoStore: RequestHandler = (_req, res, next) => {
 
 export const apiErrorHandler: ErrorRequestHandler = (
   error,
-  _req,
+  req,
   res,
   _next,
 ) => {
@@ -114,9 +114,16 @@ export const apiErrorHandler: ErrorRequestHandler = (
     errorName = /^[A-Za-z][A-Za-z0-9]{0,39}$/.test(rawName)
       ? rawName
       : "UnknownError",
-    requestId = res.get("x-request-id") || "unassigned";
-  // Never log parser error.body/message/stack: malformed JSON can contain
-  // passwords, tokens, and other attacker-controlled request content.
+    requestId = res.get("x-request-id") || "unassigned",
+    path = req.originalUrl || req.url || "unknown";
+  // Never log parser error.message or request payloads: malformed JSON can
+  // contain passwords, tokens, and other attacker-controlled request content.
+  console.error("API request failed", {
+    requestId,
+    path,
+    status,
+    errorName,
+  });
   res.status(status).json({
     error:
       status < 500
