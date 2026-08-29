@@ -40,7 +40,7 @@ export default defineConfig({
   ],
   webServer: startLocalApp
     ? {
-        command: "npm run dev",
+        command: process.env.CI ? "npm run start" : "npm run dev",
         cwd: repositoryRoot,
         env: {
           ...process.env,
@@ -60,7 +60,7 @@ export default defineConfig({
         },
         url: `${appUrl}/api/health`,
         reuseExistingServer: !process.env.CI,
-        timeout: 120_000,
+        timeout: process.env.CI ? 300_000 : 120_000,
       }
     : undefined,
 });
