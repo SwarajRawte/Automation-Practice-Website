@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import type { Socket } from "socket.io-client";
 import { Activity, Radio, ShieldCheck, ShoppingCart } from "lucide-react";
@@ -146,27 +146,30 @@ export function Phase4Shop() {
     }
   };
 
-  const loadProducts = async (filters = { query, category, sort }) => {
-    const requestId = ++productRequest.current;
-    setProductsLoading(true);
-    setMessage("");
-    try {
-      const result = await api<{ data: unknown[] }>(
-        `/api/shop/products?q=${encodeURIComponent(filters.query)}&category=${encodeURIComponent(filters.category)}&sort=${encodeURIComponent(filters.sort)}`,
-      );
-      if (requestId === productRequest.current)
-        setProducts(Array.isArray(result?.data) ? (result.data as Product[]) : []);
-    } catch (error) {
-      if (requestId === productRequest.current)
-        setMessage(
-          error instanceof Error ? error.message : "Products failed to load",
+  const loadProducts = useCallback(
+    async (filters = { query, category, sort }) => {
+      const requestId = ++productRequest.current;
+      setProductsLoading(true);
+      setMessage("");
+      try {
+        const result = await api<{ data: unknown[] }>(
+          `/api/shop/products?q=${encodeURIComponent(filters.query)}&category=${encodeURIComponent(filters.category)}&sort=${encodeURIComponent(filters.sort)}`,
         );
-    } finally {
-      if (requestId === productRequest.current) setProductsLoading(false);
-    }
-  };
+        if (requestId === productRequest.current)
+          setProducts(Array.isArray(result?.data) ? (result.data as Product[]) : []);
+      } catch (error) {
+        if (requestId === productRequest.current)
+          setMessage(
+            error instanceof Error ? error.message : "Products failed to load",
+          );
+      } finally {
+        if (requestId === productRequest.current) setProductsLoading(false);
+      }
+    },
+    [query, category, sort],
+  );
 
-  const loadOrders = async () => {
+  const loadOrders = useCallback(async () => {
     setOrdersLoading(true);
     setMessage("");
     try {
@@ -179,15 +182,15 @@ export function Phase4Shop() {
     } finally {
       setOrdersLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (isProductPath(path)) void loadProducts();
-  }, [path]);
+  }, [path, loadProducts]);
 
   useEffect(() => {
     if (path.endsWith("/orders")) void loadOrders();
-  }, [path]);
+  }, [path, loadOrders]);
 
   const subtotal = useMemo(
     () => cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
@@ -671,7 +674,7 @@ export function Phase4Network() {
   const [sending, setSending] = useState(false);
   const [applying, setApplying] = useState(false);
 
-  const loadConfig = async () => {
+  const loadConfig = useCallback(async () => {
     try {
       const current = await api<Record<string, unknown>>("/api/network/config");
       setConfig(normalizeNetworkConfig(current ?? {}));
@@ -682,11 +685,11 @@ export function Phase4Network() {
           : "Network settings failed to load",
       );
     }
-  };
+  }, []);
 
   useEffect(() => {
     void loadConfig();
-  }, []);
+  }, [loadConfig]);
 
   const send = async () => {
     if (sending) return;
@@ -956,7 +959,7 @@ export function Phase4Admin() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
 
-  const loadAdmin = async () => {
+  const loadAdmin = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -975,11 +978,11 @@ export function Phase4Admin() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void loadAdmin();
-  }, []);
+  }, [loadAdmin]);
 
   const downloadReport = async () => {
     if (exporting) return;
