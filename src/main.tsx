@@ -2,6 +2,7 @@ import React, { lazy, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BrowserRouter,
+  Link,
   Navigate,
   NavLink,
   Route,
@@ -163,7 +164,7 @@ const api = async (url: string, init?: RequestInit) => {
     headers.set("content-type", "application/json");
   const r = await authenticatedFetch(url, { ...init, headers });
   const contentType = r.headers.get("content-type") || "";
-  let data: any = null;
+  let data: Record<string, unknown> | string | null = null;
   if (r.status !== 204) {
     if (contentType.includes("application/json")) {
       data = await r.json();
@@ -301,6 +302,21 @@ function AppLayout() {
   const testMode = health.status === "connected" && health.testMode;
   const currentModule = findModuleByPath(loc.pathname);
   const navGroups = navigationGroups(testMode);
+  const moduleNavigationItems = navGroups
+    .flatMap((group) => group.items)
+    .filter((item) => item.moduleId === currentModule?.id);
+  const currentDestination = `${loc.pathname}${loc.search}`;
+  const exactNavigationItems = moduleNavigationItems.filter(
+    (item) => item.path === currentDestination,
+  );
+  const activeNavigationItem =
+    exactNavigationItems.find((item) => item.label === currentModule?.name) ??
+    exactNavigationItems[0] ??
+    moduleNavigationItems.find((item) => item.label === currentModule?.name) ??
+    moduleNavigationItems[0];
+  const activeNavigationKey = activeNavigationItem
+    ? `${activeNavigationItem.moduleId}-${activeNavigationItem.label}-${activeNavigationItem.path}`
+    : null;
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("theme", theme);
@@ -372,17 +388,23 @@ function AppLayout() {
           {navGroups.map((group) => (
             <section className="nav-group" key={group.label}>
               <h2>{group.label}</h2>
-              {group.items.map(({ label, path, icon: Icon, moduleId }) => (
-                <NavLink
-                  key={`${moduleId}-${label}-${path}`}
-                  to={path}
-                  title={collapsed ? label : undefined}
-                  onClick={() => setOpen(false)}
-                >
-                  <Icon size={17} />
-                  <span>{label}</span>
-                </NavLink>
-              ))}
+              {group.items.map(({ label, path, icon: Icon, moduleId }) => {
+                const key = `${moduleId}-${label}-${path}`;
+                const active = key === activeNavigationKey;
+                return (
+                  <Link
+                    aria-current={active ? "page" : undefined}
+                    className={active ? "active" : undefined}
+                    key={key}
+                    to={path}
+                    title={collapsed ? label : undefined}
+                    onClick={() => setOpen(false)}
+                  >
+                    <Icon size={17} />
+                    <span>{label}</span>
+                  </Link>
+                );
+              })}
             </section>
           ))}
         </nav>
@@ -777,8 +799,8 @@ function Auth() {
         clearAuthentication();
         window.location.replace("/auth/login?reason=password-changed");
       }
-    } catch (error: any) {
-      setMsg(error.message);
+    } catch (error: unknown) {
+      setMsg(error instanceof Error ? error.message : "An error occurred");
       if (mode === "login") set({ ...form, password: "" });
     } finally {
       setSubmitting(false);
@@ -1171,3 +1193,4 @@ createRoot(document.getElementById("root")!).render(
     </BrowserRouter>
   </React.StrictMode>,
 );
+

@@ -20,6 +20,10 @@ npm run dev
 
 Frontend: `http://localhost:5173`; API: `http://localhost:3100`; Swagger: `http://localhost:3100/api/docs`.
 
+Use `npm run dev:all` to start the API, Vite, and the genuine secondary-origin
+fixture together. `npm run dev:origin` starts only that fixture on
+`http://localhost:3200`. Docker Compose starts both hardened services.
+
 Local single-server build or Docker:
 
 ```bash
@@ -77,17 +81,42 @@ Authentication routes:
 - `POST /api/auth/forgot-password`, `/reset-password`, `/change-password`
 - `GET /api/auth/session` (`/me` remains a compatibility alias)
 
-Test controls require `TEST_MODE=true` and the `x-test-key` header matching `TEST_CONTROL_KEY`. They include database reset/seed, user lock/unlock, and refresh-session expiration.
+Test controls require `TEST_MODE=true`, an admin session, and the `x-test-key`
+header matching `TEST_CONTROL_KEY`. They include run-scoped database reset/seed,
+clock and network controls, user lock/unlock, and refresh-session expiration.
+
+Parallel workers can create an isolated in-memory SQLite run with
+`POST /api/test/runs` and delete it with `DELETE /api/test/runs/:id`. Lifecycle
+calls require `x-test-key` matching `TEST_RUN_KEY` when configured, otherwise
+`TEST_CONTROL_KEY`; creation returns the run ID and deterministic admin, user,
+viewer, and locked actor credentials. Send the ID as `x-test-run-id` on API and
+Socket.IO handshakes. Browsers may instead use the HttpOnly `test_run` cookie
+set by creation. Tokens are bound to exactly one run, and omitted/unknown IDs
+never fall back to the default database.
+
+Within a run, `POST /api/test/snapshots` creates a named logical snapshot,
+`POST /api/test/snapshots/:name/restore` restores it while revoking sessions,
+and `POST /api/test/reset/:module` resets `auth`, `forms`, `catalog`, `shop`, or
+`uploads`. Snapshot count and bytes, active run count, and idle lifetime are
+bounded by `TEST_RUN_SNAPSHOT_MAX_BYTES`, `TEST_RUN_MAX`, and
+`TEST_RUN_TTL_MS`. SQLite `serialize`/`deserialize` is intentionally not used,
+so the isolation controls remain compatible with Node 22.12.
 
 ## Commands
 
-`npm run dev`, `npm run build`, `npm start`, `npm test`, `npm run lint`, `npm run typecheck`, `npm run seed`, `npm run reset`.
+`npm run dev`, `npm run dev:all`, `npm run dev:origin`, `npm run build`,
+`npm start`, `npm test`, `npm run lint`, `npm run typecheck`, `npm run seed`,
+`npm run reset`.
 
 ## Architecture and routes
 
 Vite serves the React/TypeScript client in development and proxies REST/WebSocket traffic to Express. Express serves the production bundle, JWT authentication, SQLite-backed data, uploads, test controls, Swagger, and Socket.IO.
 
-Practice routes include `/auth/login`, `/forms/basic`, `/interactions/buttons`, `/alerts`, `/windows`, `/frames`, `/tables/dynamic`, `/crud/products`, `/shop/products`, `/files/upload`, `/dynamic-elements?delay=3000`, `/shadow-dom`, `/storage`, `/api-playground`, `/realtime`, `/accessibility/good`, `/visual?freeze=true`, `/responsive`, `/i18n`, `/errors`, `/admin`, and `/test-control`.
+Practice routes include `/auth/login`, `/forms/basic`, `/interactions/buttons`, `/alerts`, `/windows`, `/frames`, `/tables/dynamic`, `/crud/products`, `/shop/products`, `/files/upload`, `/dynamic-elements?delay=3000`, `/shadow-dom`, `/storage`, `/api-playground`, `/realtime`, `/accessibility/good`, `/visual?freeze=true`, `/responsive`, `/i18n`, `/errors`, `/admin`, `/test-control`, and `/advanced/*`.
+
+`GET /api/health` is a process-only liveness check. `GET /api/ready` verifies
+SQLite and returns `503` when the service should leave a load-balancer pool.
+Both responses disable caching and expose no database error details.
 
 ## Phase 2 practice routes
 
@@ -99,6 +128,25 @@ Practice routes include `/auth/login`, `/forms/basic`, `/interactions/buttons`, 
 - Basic, multiple, form, nested, and dynamic frames: `/frames`
 
 Form submissions use real persistence through `POST /api/forms`; confirmation records are available at `GET /api/forms/:id`. The deterministic server-error address is `server-error@test.local`.
+
+## Advanced browser labs
+
+- Rich `contenteditable`: `/advanced/editor`
+- SVG, canvas, pointer dragging, and non-drag direction controls: `/advanced/graphics`
+- IndexedDB, Clipboard, Permissions, and Geolocation: `/advanced/browser-apis`
+- Service workers, CacheStorage, and offline state: `/advanced/offline`
+- Server-sent events and mock mailbox OTP: `/advanced/events`
+- Genuine origin-isolated iframe and `postMessage`: `/advanced/cross-origin`
+
+The authenticated support APIs are `/api/advanced/events` and
+`/api/advanced/mailbox*`. The secondary fixture exposes only `/health` and
+`/lab-frame`, validates the exact parent origin, and accepts messages only from
+that parent window and origin.
+
+`/api/advanced/mailbox` intentionally exposes plaintext OTPs only as an
+authenticated, no-store local automation fixture; it is not a production
+authentication pattern. Verification is single-use, expires after five minutes
+of logical clock time, and permits at most five failed attempts per code.
 
 ## Phase 3 data and synchronization labs
 
@@ -132,18 +180,56 @@ an explicit `DOCKER_TEST_CONTROL_KEY` only for a local containerized test lab.
 appropriate only when the application is served over HTTPS. Test-control
 endpoints are available only when `TEST_MODE=true` and require
 `TEST_CONTROL_KEY`.
-`VITE_TEST_CONTROL_KEY` exposes that same local key to the Test Control page at
-build time; every `VITE_` value is browser-visible, so this setting is test-only
-and must never be treated as a secret. Always replace the local JWT secret and
-test-control key before sharing the service. No payment/email provider or
+Test-control credentials are server-side only and are never embedded in the
+browser bundle. Always replace the local JWT secret and test-control key before
+sharing the service. No payment/email provider or
 hardware permission is contacted.
+
+`SECOND_ORIGIN_HOST` and `SECOND_ORIGIN_PORT` bind the optional fixture.
+`SECOND_ORIGIN_URL` adds its validated HTTP(S) origin to the server CSP, while
+the public `VITE_SECOND_ORIGIN_URL` tells the browser where to load it.
+`FRAME_ORIGINS` can add comma-separated trusted iframe origins.
+`SHUTDOWN_TIMEOUT_MS` sets a bounded 1-30 second graceful-shutdown deadline.
+
+## Operations and security headers
+
+Every response receives a generated `X-Request-ID`. Completion logs are JSON
+records containing only request ID, method, status, duration, and aborted state;
+headers, bodies, URLs, query strings, cookies, and tokens are never logged.
+`Server-Timing` reports application time to response headers. SIGINT and
+SIGTERM stop the HTTP/Socket.IO listener, disconnect clients, close isolated
+run databases, and close the primary database before exit.
+
+The default CSP permits scripts only from the application origin. The iframe
+lab has three exact inline-handler hashes, and dynamic React styles use the
+`style-src-attr` exception. Swagger's generated inline bootstrap/style
+exception is restricted to `/api/docs`; the separate-origin fixture has its own
+minimal CSP. Production deployments should list every additional frame origin
+explicitly rather than broadening these directives.
+
+Compose runs as the unprivileged image user with a read-only root filesystem,
+all Linux capabilities dropped, `no-new-privileges`, bounded PIDs, tmpfs for
+temporary files, loopback-only published ports, and graceful stop periods. Only
+the SQLite volume is writable. CI audits both npm trees, compiles and runs the
+offline TestNG framework suite, runs browser tests, and builds the production
+container.
 
 ## Automation examples
 
-The repository includes a pinned Playwright starter configuration in
-`examples/playwright`. Run `npm ci` there, add suites under its `tests`
-directory, start this app, and run `npm test`. Set `BASE_URL` when the app is not
-running at the default development URL, `http://localhost:5173`.
+The repository includes a runnable 42-test, three-browser Playwright matrix in
+`examples/playwright`. Run `npm ci` there, start this app, and run `npm test`.
+Set `BASE_URL` when the app is not running at the default development URL,
+`http://localhost:5173`.
+
+A runnable Selenium + TestNG + REST Assured suite is available in
+`examples/selenium-testng`. It includes local and Selenium Grid drivers,
+thread-safe parallel classes, Page Objects, API setup, screenshots on failure,
+and representative UI/API scenarios. Start the app, then run:
+
+```bash
+cd examples/selenium-testng
+mvn test
+```
 
 ## Troubleshooting
 
@@ -160,7 +246,10 @@ phase completion documents, and [UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md).
 
 ## Known limitations and next improvements
 
-This deliberately compact lab demonstrates every major automation surface, but advanced rich editors, real cross-origin frames, closed-shadow-root access, camera/microphone hardware, email delivery, and real payments are simulations or documented constraints. Natural next steps are deeper per-module variants, snapshot/restore, richer accessibility/visual exercises, and additional framework examples.
+This deliberately compact lab demonstrates the major automation surfaces, but
+closed-shadow-root access, camera/microphone hardware, external email delivery,
+and real payments remain simulations or documented constraints. Natural next
+steps are deeper per-module variants and more framework examples.
 ## Phase 4 application and network workflows
 
 Phase 4 adds a complete mock commerce flow across `/shop/products`, `/shop/cart`, `/shop/checkout`, and `/shop/orders`, deterministic payment outcomes, persisted orders and stock, configurable API/network simulations, WebSocket exercises, and an admin-only operational dashboard with CSV export. See `PHASE_4.md` for the route and scenario checklist.

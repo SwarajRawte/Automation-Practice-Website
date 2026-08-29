@@ -14,6 +14,26 @@ export type NetworkConfig = {
   rateLimit: number;
 };
 
+interface Order {
+  id: number;
+  user_id: number;
+  status: string;
+  total: number;
+  created_at: string;
+}
+
+interface OrderWithUser extends Order {
+  email: string;
+}
+
+interface CountResult {
+  count: number;
+}
+
+interface SumResult {
+  total: number;
+}
+
 const defaultNetworkState = createNetworkState();
 const networkState = () => currentTestRun()?.network || defaultNetworkState;
 export const networkConfig = new Proxy(defaultNetworkState.config, {
@@ -390,7 +410,7 @@ export function createPhase4Router(io?: Server) {
   router.get("/shop/orders/:id", (req: AuthRequest, res) => {
     const order = db
       .prepare("SELECT * FROM orders WHERE id=? AND user_id=?")
-      .get(String(req.params.id), req.user!.id) as any;
+      .get(String(req.params.id), req.user!.id) as Order | undefined;
     return order
       ? res.json({
           ...order,
@@ -516,23 +536,23 @@ export function createPhase4Router(io?: Server) {
 
   router.get("/admin/summary", roles("ADMIN"), (_req, res) =>
     res.json({
-      users: (db.prepare("SELECT COUNT(*) count FROM users").get() as any)
+      users: (db.prepare("SELECT COUNT(*) count FROM users").get() as CountResult)
         .count,
-      orders: (db.prepare("SELECT COUNT(*) count FROM orders").get() as any)
+      orders: (db.prepare("SELECT COUNT(*) count FROM orders").get() as CountResult)
         .count,
       revenue: (
         db
           .prepare(
             "SELECT COALESCE(SUM(total),0) total FROM orders WHERE status!='CANCELLED'",
           )
-          .get() as any
+          .get() as SumResult
       ).total,
       products: (
         db
           .prepare(
             "SELECT COUNT(*) count FROM products WHERE deleted_at IS NULL",
           )
-          .get() as any
+          .get() as CountResult
       ).count,
     }),
   );
@@ -550,7 +570,7 @@ export function createPhase4Router(io?: Server) {
       .prepare(
         "SELECT id,user_id,status,total,created_at FROM orders ORDER BY id",
       )
-      .all() as any[];
+      .all() as Order[];
     res
       .attachment("orders-report.csv")
       .type("text/csv")

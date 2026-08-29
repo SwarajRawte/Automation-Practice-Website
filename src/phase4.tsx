@@ -5,32 +5,13 @@ import { Activity, Radio, ShieldCheck, ShoppingCart } from "lucide-react";
 import { PageHeader } from "./components/layout/PageHeader";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
 import {
+  api,
   authenticatedFetch,
   createAuthenticatedSocket,
   getSessionUser,
 } from "./authClient";
 
 const CART_STORAGE_KEY = "phase4-cart";
-
-const api = async (url: string, init?: RequestInit) => {
-  const headers = new Headers(init?.headers);
-  if (init?.body && !headers.has("content-type"))
-    headers.set("content-type", "application/json");
-  const response = await authenticatedFetch(url, { ...init, headers });
-  const text = response.status === 204 ? "" : await response.text();
-  let body: any = null;
-  if (text) {
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = { error: "The API returned an unexpected response." };
-    }
-  }
-  if (!response.ok) {
-    throw new Error(body?.error || `HTTP ${response.status}`);
-  }
-  return body;
-};
 
 type CartItem = {
   productId: number;
@@ -668,7 +649,7 @@ const DEFAULT_NETWORK_CONFIG: NetworkConfig = {
   rateLimit: 10,
 };
 
-function normalizeNetworkConfig(value: any): NetworkConfig {
+function normalizeNetworkConfig(value: Record<string, unknown>): NetworkConfig {
   const statusCode = Number(value?.statusCode);
   return {
     delay: Math.min(5000, Math.max(0, Number(value?.delay) || 0)),
@@ -957,9 +938,19 @@ export function Phase4Realtime() {
 }
 
 export function Phase4Admin() {
-  const [summary, setSummary] = useState<any>(null);
+  interface AdminSummary {
+    users: number;
+    orders: number;
+    revenue: number;
+    products: number;
+  }
+  interface AuditLog {
+    id?: number;
+    [key: string]: unknown;
+  }
+  const [summary, setSummary] = useState<AdminSummary | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [audit, setAudit] = useState<any[]>([]);
+  const [audit, setAudit] = useState<AuditLog[]>([]);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1121,3 +1112,5 @@ export function Phase4Admin() {
     </>
   );
 }
+
+

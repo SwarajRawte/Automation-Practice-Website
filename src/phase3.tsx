@@ -2,22 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
 import { PageHeader } from "./components/layout/PageHeader";
-import { authenticatedFetch, getSessionUser } from "./authClient";
+import { api, authenticatedFetch, getSessionUser } from "./authClient";
 import { Braces, Database, FileUp, Table2, TimerReset } from "lucide-react";
-const api = async (url: string, init?: RequestInit) => {
-  const response = await authenticatedFetch(url, {
-      ...init,
-      headers: {
-        ...(init?.body instanceof FormData
-          ? {}
-          : { "content-type": "application/json" }),
-        ...init?.headers,
-      },
-    }),
-    body = response.status === 204 ? null : await response.json();
-  if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-  return body;
-};
 function Info({
   name,
   concepts,
@@ -521,7 +507,7 @@ export function Phase3Products() {
     [page, setPage] = useState(1),
     [total, setTotal] = useState(0),
     [editing, setEditing] = useState<Product | null>(null),
-    [history, setHistory] = useState<any[]>([]),
+    [history, setHistory] = useState<Array<{ snapshot: unknown; action: string }>>([]),
     [message, setMessage] = useState(""),
     [loading, setLoading] = useState(true),
     [undo, setUndo] = useState<{ id: number; token: string } | null>(null),
@@ -1380,3 +1366,4 @@ export function Phase3ShadowDom() {
     </>
   );
 }
+

@@ -117,7 +117,6 @@ export const apiErrorHandler: ErrorRequestHandler = (
     requestId = res.get("x-request-id") || "unassigned";
   // Never log parser error.body/message/stack: malformed JSON can contain
   // passwords, tokens, and other attacker-controlled request content.
-  console.error("API request failed", { requestId, status, errorName });
   res.status(status).json({
     error:
       status < 500

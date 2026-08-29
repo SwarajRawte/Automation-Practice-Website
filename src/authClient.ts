@@ -383,3 +383,20 @@ export function createAuthenticatedSocket(): Socket {
   );
   return socket;
 }
+
+export async function api<T>(
+  url: string,
+  init?: RequestInit,
+): Promise<T> {
+  const response = await authenticatedFetch(url, {
+    ...init,
+    headers: {
+      ...(init?.body instanceof FormData ? {} : { "content-type": "application/json" }),
+      ...init?.headers,
+    },
+  });
+  const body = response.status === 204 ? null : await response.json();
+  if (!response.ok) throw new Error(body?.error || \HTTP \\);
+  return body as T;
+}
+
