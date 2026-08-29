@@ -147,13 +147,14 @@ export function Phase4Shop() {
   };
 
   const loadProducts = useCallback(
-    async (filters = { query, category, sort }) => {
+    async (filters?: { query: string; category: string; sort: string }) => {
       const requestId = ++productRequest.current;
       setProductsLoading(true);
       setMessage("");
+      const currentFilters = filters || { query, category, sort };
       try {
         const result = await api<{ data: unknown[] }>(
-          `/api/shop/products?q=${encodeURIComponent(filters.query)}&category=${encodeURIComponent(filters.category)}&sort=${encodeURIComponent(filters.sort)}`,
+          `/api/shop/products?q=${encodeURIComponent(currentFilters.query)}&category=${encodeURIComponent(currentFilters.category)}&sort=${encodeURIComponent(currentFilters.sort)}`,
         );
         if (requestId === productRequest.current)
           setProducts(Array.isArray(result?.data) ? (result.data as Product[]) : []);
