@@ -1,4 +1,4 @@
-FROM node:24-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -6,7 +6,7 @@ COPY . .
 ARG VITE_SECOND_ORIGIN_URL=http://localhost:3200
 RUN npm run build
 
-FROM node:24-alpine AS runtime
+FROM node:26-alpine AS runtime
 ENV NODE_ENV=production \
     PORT=3000
 WORKDIR /app
