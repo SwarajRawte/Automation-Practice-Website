@@ -151,11 +151,11 @@ export function Phase4Shop() {
     setProductsLoading(true);
     setMessage("");
     try {
-      const result = await api(
+      const result = await api<{ data: unknown[] }>(
         `/api/shop/products?q=${encodeURIComponent(filters.query)}&category=${encodeURIComponent(filters.category)}&sort=${encodeURIComponent(filters.sort)}`,
       );
       if (requestId === productRequest.current)
-        setProducts(Array.isArray(result?.data) ? result.data : []);
+        setProducts(Array.isArray(result?.data) ? (result.data as Product[]) : []);
     } catch (error) {
       if (requestId === productRequest.current)
         setMessage(
@@ -170,8 +170,8 @@ export function Phase4Shop() {
     setOrdersLoading(true);
     setMessage("");
     try {
-      const result = await api("/api/shop/orders");
-      setOrders(Array.isArray(result?.data) ? result.data : []);
+      const result = await api<{ data: unknown[] }>("/api/shop/orders");
+      setOrders(Array.isArray(result?.data) ? (result.data as Order[]) : []);
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Orders failed to load",
@@ -254,7 +254,7 @@ export function Phase4Shop() {
     setMessage("");
     setSubmitting(true);
     try {
-      const result = await api("/api/shop/checkout", {
+      const result = await api<{ orderId: number; message: string; total: number }>("/api/shop/checkout", {
         method: "POST",
         body: JSON.stringify({
           items: cart,
@@ -267,7 +267,7 @@ export function Phase4Shop() {
       });
       saveCart([]);
       setMessage(
-        `Order ${result.orderId}: ${result.message}. Total $${Number(result.total).toFixed(2)}`,
+        `Order ${result?.orderId ?? 0}: ${result?.message ?? "Checkout complete"}. Total $${Number(result?.total ?? 0).toFixed(2)}`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Checkout failed");
@@ -673,8 +673,8 @@ export function Phase4Network() {
 
   const loadConfig = async () => {
     try {
-      const current = await api("/api/network/config");
-      setConfig(normalizeNetworkConfig(current));
+      const current = await api<Record<string, unknown>>("/api/network/config");
+      setConfig(normalizeNetworkConfig(current ?? {}));
     } catch (error) {
       setStatus(
         error instanceof Error
@@ -733,7 +733,7 @@ export function Phase4Network() {
     setApplying(true);
     setStatus("");
     try {
-      const result = await api("/api/network/config", {
+      const result = await api<Record<string, unknown>>("/api/network/config", {
         method: "PUT",
         body: JSON.stringify({
           ...normalized,
@@ -743,7 +743,7 @@ export function Phase4Network() {
         }),
       });
       setConfig(normalized);
-      setStatus(JSON.stringify(result, null, 2));
+      setStatus(JSON.stringify(result ?? {}, null, 2));
     } catch (error) {
       setStatus(
         error instanceof Error ? error.message : "Simulation update failed",
@@ -961,11 +961,11 @@ export function Phase4Admin() {
     setError("");
     try {
       const [nextSummary, nextOrders, nextAudit] = await Promise.all([
-        api("/api/admin/summary"),
-        api("/api/admin/orders"),
-        api("/api/admin/audit"),
+        api<{ users: number; orders: number; revenue: number; products: number }>("/api/admin/summary"),
+        api<{ data: Order[] }>("/api/admin/orders"),
+        api<{ data: AuditLog[] }>("/api/admin/audit"),
       ]);
-      setSummary(nextSummary);
+      setSummary(nextSummary ?? null);
       setOrders(Array.isArray(nextOrders?.data) ? nextOrders.data : []);
       setAudit(Array.isArray(nextAudit?.data) ? nextAudit.data : []);
     } catch (reason) {
@@ -1094,10 +1094,10 @@ export function Phase4Admin() {
         <section className="panel">
           <h3>Recent audit activity</h3>
           <ol className="audit-list">
-            {audit.slice(0, 10).map((entry) => (
-              <li key={entry.id}>
-                <strong>{entry.action}</strong>
-                <small>{entry.created_at}</small>
+            {audit.slice(0, 10).map((entry, index) => (
+              <li key={String(entry.id ?? index)}>
+                <strong>{String(entry.action ?? "Audit entry")}</strong>
+                <small>{String(entry.created_at ?? "")}</small>
               </li>
             ))}
           </ol>

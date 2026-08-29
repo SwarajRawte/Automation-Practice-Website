@@ -158,13 +158,13 @@ function safeReturnUrl(value: string | null, fallback = "/dashboard") {
   }
 }
 
-const api = async (url: string, init?: RequestInit) => {
+const api = async <T,>(url: string, init?: RequestInit): Promise<T | null> => {
   const headers = new Headers(init?.headers);
   if (init?.body && !(init.body instanceof FormData))
     headers.set("content-type", "application/json");
   const r = await authenticatedFetch(url, { ...init, headers });
   const contentType = r.headers.get("content-type") || "";
-  let data: Record<string, unknown> | string | null = null;
+  let data: Record<string, unknown> | null = null;
   if (r.status !== 204) {
     if (contentType.includes("application/json")) {
       data = await r.json();
@@ -179,11 +179,14 @@ const api = async (url: string, init?: RequestInit) => {
     }
   }
   if (!r.ok) {
-    throw Error(data?.error || `HTTP ${r.status}`);
+    const errorMsg = typeof data?.error === "string" ? data.error : `HTTP ${r.status}`;
+    throw Error(errorMsg);
   }
-  if (!contentType.includes("application/json") && r.status !== 204)
-    throw Error(data.error);
-  return data;
+  if (!contentType.includes("application/json") && r.status !== 204) {
+    const errorMsg = typeof data?.error === "string" ? data.error : "Invalid response";
+    throw Error(errorMsg);
+  }
+  return data as T | null;
 };
 function AuthenticationLoading() {
   return (
@@ -742,10 +745,11 @@ function Auth() {
     setSubmitting(true);
     try {
       if (mode === "login") {
-        const x = await api("/api/auth/login", {
+        const x = await api<{ user: { name: string } }>("/api/auth/login", {
           method: "POST",
           body: JSON.stringify({ ...form, rememberMe: form.remember }),
         });
+        if (!x) throw Error("Login failed");
         acceptLogin(x);
         setMsg(`Welcome ${x.user.name}`);
         const redirect = safeReturnUrl(
@@ -753,10 +757,11 @@ function Auth() {
         );
         window.location.replace(redirect);
       } else if (mode === "register") {
-        const x = await api("/api/auth/register", {
+        const x = await api<{ verificationToken?: string; message: string }>("/api/auth/register", {
           method: "POST",
           body: JSON.stringify(form),
         });
+        if (!x) throw Error("Registration failed");
         const verificationToken =
           typeof x.verificationToken === "string"
             ? x.verificationToken.trim()
@@ -765,26 +770,29 @@ function Auth() {
           `${x.message}${verificationToken ? `. Test token: ${verificationToken}` : ""}`,
         );
       } else if (mode === "forgot" || mode === "forgot-password") {
-        const x = await api("/api/auth/forgot-password", {
+        const x = await api<{ message: string; resetToken?: string }>("/api/auth/forgot-password", {
           method: "POST",
           body: JSON.stringify({ email: form.email }),
         });
+        if (!x) throw Error("Request failed");
         setMsg(
           `${x.message}${x.resetToken ? ` Test token: ${x.resetToken}` : ""}`,
         );
       } else if (mode === "reset-password") {
         if (form.password !== form.confirmPassword)
           throw Error("Passwords do not match");
-        const x = await api("/api/auth/reset-password", {
+        const x = await api<{ message: string }>("/api/auth/reset-password", {
           method: "POST",
           body: JSON.stringify({ token: form.token, password: form.password }),
         });
+        if (!x) throw Error("Reset failed");
         setMsg(x.message);
       } else if (mode === "verify") {
-        const x = await api("/api/auth/verify", {
+        const x = await api<{ message: string }>("/api/auth/verify", {
           method: "POST",
           body: JSON.stringify({ token: form.token }),
         });
+        if (!x) throw Error("Verification failed");
         setMsg(x.message);
       } else if (mode === "change-password") {
         if (form.password !== form.confirmPassword)
@@ -1193,4 +1201,5 @@ createRoot(document.getElementById("root")!).render(
     </BrowserRouter>
   </React.StrictMode>,
 );
+
 

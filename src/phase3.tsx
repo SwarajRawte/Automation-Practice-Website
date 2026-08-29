@@ -61,15 +61,15 @@ export function Phase3Tables() {
     const request = ++loadRequest.current;
     setLoading(true);
     try {
-      const result = await api(
+      const result = await api<{ data: unknown[]; total: number }>(
         `/api/table-users?page=${page}&size=${virtual ? 100 : size}&search=${encodeURIComponent(appliedSearch)}&status=${encodeURIComponent(status)}&sort=${sort}&direction=${direction}&sorts=${sort}:${direction}${secondarySort ? `,${secondarySort}:asc` : ""}`,
       );
       if (request !== loadRequest.current) return;
-      setRows(result.data);
-      setTotal(result.total);
+      setRows((result?.data || []) as Row[]);
+      setTotal((result?.total || 0) as number);
       setSelected([]);
       setExpanded(null);
-      if (virtual) setVisibleCount(Math.min(25, result.data.length));
+      if (virtual) setVisibleCount(Math.min(25, (result?.data?.length || 0) as number));
     } catch (error) {
       if (request !== loadRequest.current) return;
       setRows([]);
@@ -519,12 +519,12 @@ export function Phase3Products() {
     const request = ++loadRequest.current;
     setLoading(true);
     try {
-      const result = await api(
+      const result = await api<{ data: unknown[]; total: number }>(
         `/api/products?page=${page}&size=8&q=${encodeURIComponent(appliedQuery)}&category=${encodeURIComponent(category)}&sort=${sort}`,
       );
       if (request !== loadRequest.current) return;
-      setProducts(result.data);
-      setTotal(result.total);
+      setProducts((result?.data || []) as Product[]);
+      setTotal((result?.total || 0) as number);
     } catch (error) {
       if (request !== loadRequest.current) return;
       setProducts([]);
@@ -555,11 +555,11 @@ export function Phase3Products() {
     let result: Product;
     try {
       result = editing
-        ? await api(`/api/products/${editing.id}`, {
+        ? await api<Product>(`/api/products/${editing.id}`, {
             method: "PUT",
             body: JSON.stringify({ ...form, version: editing.version }),
           })
-        : await api("/api/products", {
+        : await api<Product>("/api/products", {
             method: "POST",
             body: JSON.stringify(form),
           });
@@ -572,7 +572,7 @@ export function Phase3Products() {
       try {
         const data = new FormData();
         data.append("image", image);
-        await api(`/api/products/${result.id}/image`, {
+        await api<Record<string, unknown>>(`/api/products/${result.id}/image`, {
           method: "POST",
           body: data,
         });
@@ -604,8 +604,8 @@ export function Phase3Products() {
   const remove = async (p: Product) => {
     if (!window.confirm(`Delete ${p.name}?`)) return;
     try {
-      const result = await api(`/api/products/${p.id}`, { method: "DELETE" });
-      setUndo({ id: p.id, token: result.undoToken });
+      const result = await api<{ undoToken: string }>(`/api/products/${p.id}`, { method: "DELETE" });
+      setUndo({ id: p.id, token: result?.undoToken || "" });
       setMessage(`${p.name} deleted — undo available`);
       if (products.length === 1 && page > 1) setPage((value) => value - 1);
       else await load();
@@ -616,7 +616,7 @@ export function Phase3Products() {
   const restore = async () => {
     if (!undo) return;
     try {
-      await api(`/api/products/${undo.id}/undo`, {
+      await api<Record<string, unknown>>(`/api/products/${undo.id}/undo`, {
         method: "POST",
         body: JSON.stringify({ undoToken: undo.token }),
       });
@@ -629,7 +629,7 @@ export function Phase3Products() {
   };
   const duplicate = async (product: Product) => {
     try {
-      await api(`/api/products/${product.id}/duplicate`, {
+      await api<Record<string, unknown>>(`/api/products/${product.id}/duplicate`, {
         method: "POST",
         body: "{}",
       });
@@ -641,7 +641,8 @@ export function Phase3Products() {
   };
   const showHistory = async (id: number) => {
     try {
-      setHistory((await api(`/api/products/${id}/history`)).data);
+      const result = await api<{ data: unknown[] }>(`/api/products/${id}/history`);
+      setHistory((result?.data || []) as Array<{ snapshot: unknown; action: string }>);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "History failed");
     }
@@ -889,7 +890,8 @@ export function Phase3Files() {
     fileInput = useRef<HTMLInputElement | null>(null);
   const refresh = async () => {
     try {
-      setFiles((await api("/api/files")).data);
+      const result = await api<{ data: unknown[] }>("/api/files");
+      setFiles((result?.data || []) as Uploaded[]);
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Unable to load files",
@@ -921,13 +923,13 @@ export function Phase3Files() {
       await waitForUploadStart(activeController.signal);
       const data = new FormData();
       selected.forEach((file) => data.append("files", file));
-      const result = await api(`/api/files/upload${fail ? "?fail=true" : ""}`, {
+      const result = await api<{ files: unknown[] }>(`/api/files/upload${fail ? "?fail=true" : ""}`, {
         method: "POST",
         body: data,
         signal: activeController.signal,
       });
       setProgress(100);
-      setMessage(`${result.files.length} file(s) uploaded`);
+      setMessage(`${(result?.files?.length || 0) as number} file(s) uploaded`);
       setSelected([]);
       if (fileInput.current) fileInput.current.value = "";
       await refresh();
@@ -956,12 +958,12 @@ export function Phase3Files() {
     try {
       const data = new FormData();
       data.append("file", csv);
-      const result = await api("/api/files/process-csv", {
+      const result = await api<{ rows: number; headers: string[] }>("/api/files/process-csv", {
         method: "POST",
         body: data,
       });
       setMessage(
-        `CSV processed: ${result.rows} row(s), headers: ${result.headers.join(", ")}`,
+        `CSV processed: ${result?.rows || 0} row(s), headers: ${(result?.headers || []).join(", ")}`,
       );
     } catch (error) {
       setMessage(
@@ -1104,7 +1106,7 @@ export function Phase3Files() {
                 className="danger"
                 onClick={async () => {
                   try {
-                    await api(`/api/files/${file.id}`, { method: "DELETE" });
+                    await api<Record<string, unknown>>(`/api/files/${file.id}`, { method: "DELETE" });
                     setMessage(`${file.name} removed`);
                     await refresh();
                   } catch (error) {

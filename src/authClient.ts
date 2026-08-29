@@ -396,7 +396,7 @@ export async function api<T>(
     },
   });
   const body = response.status === 204 ? null : await response.json();
-  if (!response.ok) throw new Error(body?.error || \HTTP \\);
+  if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
   return body as T;
 }
 

@@ -536,23 +536,23 @@ export function createPhase4Router(io?: Server) {
 
   router.get("/admin/summary", roles("ADMIN"), (_req, res) =>
     res.json({
-      users: (db.prepare("SELECT COUNT(*) count FROM users").get() as CountResult)
+      users: (db.prepare("SELECT COUNT(*) count FROM users").get() as unknown as CountResult)
         .count,
-      orders: (db.prepare("SELECT COUNT(*) count FROM orders").get() as CountResult)
+      orders: (db.prepare("SELECT COUNT(*) count FROM orders").get() as unknown as CountResult)
         .count,
       revenue: (
         db
           .prepare(
             "SELECT COALESCE(SUM(total),0) total FROM orders WHERE status!='CANCELLED'",
           )
-          .get() as SumResult
+          .get() as unknown as SumResult
       ).total,
       products: (
         db
           .prepare(
             "SELECT COUNT(*) count FROM products WHERE deleted_at IS NULL",
           )
-          .get() as CountResult
+          .get() as unknown as CountResult
       ).count,
     }),
   );
@@ -570,7 +570,7 @@ export function createPhase4Router(io?: Server) {
       .prepare(
         "SELECT id,user_id,status,total,created_at FROM orders ORDER BY id",
       )
-      .all() as Order[];
+      .all() as unknown as Order[];
     res
       .attachment("orders-report.csv")
       .type("text/csv")

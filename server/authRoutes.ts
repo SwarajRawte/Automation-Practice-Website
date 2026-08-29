@@ -516,13 +516,13 @@ authRouter.post("/reset-password", async (req, res) => {
   res.json({ message: "Password reset successfully" });
 });
 authRouter.get("/me", auth, (req: AuthRequest, res) => {
-  const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.user!.id);
+  const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.user!.id) as UserRow | undefined;
   u
     ? res.json(publicUser(u))
     : res.status(404).json({ error: "User not found" });
 });
 authRouter.get("/session", auth, (req: AuthRequest, res) => {
-  const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.user!.id);
+  const u = db.prepare("SELECT * FROM users WHERE id=?").get(req.user!.id) as unknown as UserRow | undefined;
   return u
     ? res.json({ user: publicUser(u) })
     : res
@@ -532,7 +532,10 @@ authRouter.get("/session", auth, (req: AuthRequest, res) => {
 authRouter.post("/change-password", auth, async (req: AuthRequest, res) => {
   const u = db
     .prepare("SELECT * FROM users WHERE id=?")
-    .get(req.user!.id) as any;
+    .get(req.user!.id) as unknown as UserRow | undefined;
+  if (!u) {
+    return res.status(404).json({ error: "User not found", code: "USER_NOT_FOUND" });
+  }
   const body = isRecord(req.body) ? req.body : {},
     currentPassword =
       typeof body.currentPassword === "string" ? body.currentPassword : "",
