@@ -45,6 +45,7 @@ import {
   searchableModules,
   type RouteComponentKey,
 } from "./moduleRegistry";
+import { THEME_STORAGE_KEY } from "./storageKeys";
 import "./styles.css";
 
 const DashboardRoute = lazy(() => import("./Dashboard"));
@@ -294,7 +295,7 @@ function AppLayout() {
     [collapsed, setCollapsed] = useState(false),
     [commandOpen, setCommandOpen] = useState(false),
     [query, setQuery] = useState(""),
-    [theme, setTheme] = useState(localStorage.getItem("theme") || "system"),
+    [theme, setTheme] = useState(localStorage.getItem(THEME_STORAGE_KEY) || "system"),
     [health, setHealth] = useState<{
       status: "checking" | "connected" | "disconnected";
       testMode: boolean;
@@ -322,7 +323,7 @@ function AppLayout() {
     : null;
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("theme", theme);
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
   useEffect(() => {
     const controller = new AbortController();

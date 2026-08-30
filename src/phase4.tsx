@@ -10,8 +10,7 @@ import {
   createAuthenticatedSocket,
   getSessionUser,
 } from "./authClient";
-
-const CART_STORAGE_KEY = "phase4-cart";
+import { CART_STORAGE_KEY } from "./storageKeys";
 
 type CartItem = {
   productId: number;
