@@ -447,7 +447,7 @@ authRouter.post("/logout", (req, res) => {
   // refresh value must not make logout silently skip server-side revocation.
   return completeLogout(accessUser?.id || refreshRecord?.user_id);
 });
-const forgotPassword = (req: any, res: any) => {
+const forgotPassword: RequestHandler = (req, res) => {
   if (!isTestMode())
     return res.status(503).json({
       error: "Password recovery simulation is disabled",
