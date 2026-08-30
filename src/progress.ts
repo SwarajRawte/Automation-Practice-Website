@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  PROGRESS_CHANGE_EVENT,
+  PROGRESS_STORAGE_PREFIX,
+} from "./storageKeys";
 
 export type ProgressStatus = "not-started" | "in-progress" | "completed";
 
@@ -10,11 +14,8 @@ export type ModuleProgress = {
 
 export type ProgressRecord = Record<string, ModuleProgress>;
 
-const STORAGE_PREFIX = "e2e-test-lab:progress:v1:user:";
-const CHANGE_EVENT = "e2e-test-lab:progress-change";
-
 function storageKey(userId: string | number | null | undefined) {
-  return `${STORAGE_PREFIX}${encodeURIComponent(String(userId ?? "anonymous"))}`;
+  return `${PROGRESS_STORAGE_PREFIX}${encodeURIComponent(String(userId ?? "anonymous"))}`;
 }
 
 function normalizeEntry(value: unknown): ModuleProgress | null {
@@ -55,7 +56,7 @@ function writeProgress(key: string, progress: ProgressRecord) {
   try {
     localStorage.setItem(key, JSON.stringify(progress));
     queueMicrotask(() =>
-      window.dispatchEvent(new CustomEvent(CHANGE_EVENT, { detail: { key } })),
+      window.dispatchEvent(new CustomEvent(PROGRESS_CHANGE_EVENT, { detail: { key } })),
     );
   } catch {
     // A storage-disabled browser can still use the current in-memory state.
@@ -87,10 +88,10 @@ export function useModuleProgress(userId: string | number | null | undefined) {
       setProgress(readProgress(key));
     };
     window.addEventListener("storage", sync);
-    window.addEventListener(CHANGE_EVENT, sync);
+    window.addEventListener(PROGRESS_CHANGE_EVENT, sync);
     return () => {
       window.removeEventListener("storage", sync);
-      window.removeEventListener(CHANGE_EVENT, sync);
+      window.removeEventListener(PROGRESS_CHANGE_EVENT, sync);
     };
   }, [key]);
 

@@ -11,9 +11,11 @@ import {
 import { PageHeader } from "./components/layout/PageHeader";
 import { TestInfoPanel } from "./components/testing/TestInfoPanel";
 import { authenticatedFetch } from "./authClient";
-
-const LAB_LOCAL_KEY = "phase5-preference";
-const LAB_SESSION_KEY = "phase5-session";
+import {
+  LAB_LOCAL_KEY,
+  LAB_SESSION_KEY,
+  LANGUAGE_STORAGE_KEY,
+} from "./storageKeys";
 
 function hasCookie(name: string, expectedValue: string) {
   return document.cookie.split(";").some((entry) => {
@@ -344,14 +346,14 @@ const locales = {
 type Language = keyof typeof locales;
 
 export function Phase5I18n() {
-  const initial = localStorage.getItem("phase5-language");
+  const initial = localStorage.getItem(LANGUAGE_STORAGE_KEY);
   const [language, setLanguage] = useState<Language>(
     initial && initial in locales ? (initial as Language) : "en",
   );
   const value = locales[language];
   const change = (next: Language) => {
     setLanguage(next);
-    localStorage.setItem("phase5-language", next);
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, next);
   };
   return (
     <div dir={value.dir} lang={value.locale}>
