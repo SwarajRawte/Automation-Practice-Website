@@ -8,6 +8,7 @@ import {
   api,
   authenticatedFetch,
   createAuthenticatedSocket,
+  devWarn,
   getSessionUser,
 } from "./authClient";
 import { CART_STORAGE_KEY } from "./storageKeys";
@@ -90,7 +91,8 @@ function readCart(owner: string) {
       return [];
     }
     return normalizeCart(store[owner]);
-  } catch {
+  } catch (error) {
+    devWarn(`readCart(${owner})`, error);
     localStorage.removeItem(CART_STORAGE_KEY);
     return [];
   }

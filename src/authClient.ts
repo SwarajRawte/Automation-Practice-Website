@@ -23,6 +23,11 @@ const ACCESS_STORAGE_KEY = "token";
 const REFRESH_STORAGE_KEY = "refreshToken";
 const USER_STORAGE_KEY = "user";
 
+// Surfaces otherwise-silent catch blocks during local development only.
+export function devWarn(context: string, error: unknown) {
+  if (import.meta.env.DEV) console.warn(`[authClient] ${context}`, error);
+}
+
 let accessToken: string | null = null;
 let legacyRefreshToken: string | null = null;
 let legacyRefreshFallbackAvailable = false;
@@ -35,7 +40,8 @@ let logoutRequest: Promise<Response> | null = null;
 function readStorage(key: string) {
   try {
     return localStorage.getItem(key);
-  } catch {
+  } catch (error) {
+    devWarn(`readStorage(${key})`, error);
     return null;
   }
 }
@@ -149,7 +155,8 @@ function requestUrl(input: RequestInfo | URL) {
 function isSameOrigin(input: RequestInfo | URL) {
   try {
     return requestUrl(input).origin === window.location.origin;
-  } catch {
+  } catch (error) {
+    devWarn("isSameOrigin", error);
     return false;
   }
 }
@@ -166,7 +173,8 @@ function isPublicAuthEndpoint(input: RequestInfo | URL) {
       "/api/auth/refresh",
       "/api/auth/logout",
     ].includes(requestUrl(input).pathname);
-  } catch {
+  } catch (error) {
+    devWarn("isPublicAuthEndpoint", error);
     return false;
   }
 }
